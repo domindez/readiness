@@ -4,6 +4,14 @@ Check-in diario: métricas nocturnas del reloj (importadas de intervals.icu o a 
 
 Stack: Astro 7 (SSR), Cloudflare Workers, D1 y Chart.js.
 
+## Qué hace
+
+- **Hoy**: readiness del día con alertas, valoración, check-in (datos del reloj y preguntas) y tira de los últimos 7 días.
+- **Últimos entrenamientos**: tarjeta deslizable con los 7 más recientes (tiempo, distancia, ritmo, FC, desnivel, carga y eficiencia de carrera comparada con tus carreras anteriores).
+- **Km semanales**: gráfica de las últimas 12 semanas de carrera; al tocar una semana muestra su distancia, tiempo y desnivel.
+- **Tendencias** e **Historial**: evolución de cada métrica y todos los días registrados.
+- **Ajustes**: editar las preguntas, importar el histórico de intervals.icu y exportar los datos.
+
 ## Desarrollo local
 
 ```sh
