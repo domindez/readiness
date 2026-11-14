@@ -1,0 +1,742 @@
+---
+import { env } from 'cloudflare:workers';
+import Base from '../layouts/Base.astro';
+import Icon from '../components/Icon.astro';
+import LikertQuestion from '../components/LikertQuestion.astro';
+import ReadinessCard, { type KeyStat } from '../components/ReadinessCard.astro';
+import { getAllData, getDay, upsertImported } from '../lib/db';
+import { addDays, dayRange, formatLong, isIsoDate, todayIn } from '../lib/dates';
+import { METRIC_ICONS } from '../lib/icons';
+import { fetchActivities, fetchWellness, intervalsConfigured } from '../lib/intervals';
+import { lastWorkout, recentWorkouts } from '../lib/workout';
+import LastWorkoutCard from '../components/LastWorkoutCard.astro';
+import { mondayOf, weeklyRuns } from '../lib/weekly';
+import WeeklyRunsCard from '../components/WeeklyRunsCard.astro';
+import { GROUP_LABELS, METRICS, METRIC_BY_KEY, type MetricDef, type MetricKey } from '../lib/metrics';
+import { alertsFor, analyze, ANSWER_MAX, goodness } from '../lib/readiness';
+import { RECENT_DAYS, recentMean, round } from '../lib/stats';
+import { assess } from '../lib/assessment';
+import AssessmentCard from '../components/AssessmentCard.astro';
+
+const today = todayIn(env.TZ_NAME || 'Europe/Madrid');
+const qd = Astro.url.searchParams.get('date');
+const date = isIsoDate(qd) && qd <= today ? qd : today;
+
+// Precarga automática desde intervals.icu para los últimos días si aún no hay datos del reloj.
+let syncNote: { text: string; kind: 'ok' | 'info' | 'error' } | null = null;
+const canSync = intervalsConfigured();
+let day = await getDay(date);
+// Solo cuentan las métricas de esta noche: el estrés de ayer llega antes que los datos del sueño.
+const nightly = METRICS.filter((m) => m.intervals && !m.intervals.prevDay).map((m) => m.key);
+const hasWatchData = (e: Partial<Record<MetricKey, number | null>> | null) => !!e && nightly.some((k) => e[k] != null);
+if (canSync && date >= addDays(today, -3) && !hasWatchData(day.entry)) {
+  try {
+    const { days } = await fetchWellness(date, date);
+    if (days.some((d) => hasWatchData(d.metrics))) {
+      await upsertImported(days, false);
+      day = await getDay(date);
+      syncNote = { text: 'Datos del reloj importados de intervals.icu. Revísalos y completa lo que falte.', kind: 'ok' };
+    } else {
+      syncNote = { text: 'intervals.icu aún no tiene datos de esta noche. Sincroniza el reloj y pulsa «Reimportar».', kind: 'info' };
+    }
+  } catch (e) {
+    syncNote = { text: `No se pudo importar de intervals.icu: ${(e as Error).message}`, kind: 'error' };
+  }
+}
+
+// Últimos entrenamientos y km semanales (en paralelo). Desde el lunes de hace 11 semanas: cubre las 12 semanas
+// de la gráfica y de sobra los 60 días con los que se compara la eficiencia.
+const workoutP = canSync
+  ? fetchActivities(addDays(mondayOf(date), -77), date, 6000).then(
+      (acts) => {
+        const list = recentWorkouts(acts, date, 7);
+        const w = list[0] ?? null;
+        return {
+          list,
+          run: !w || w.kind === 'run' ? null : lastWorkout(acts, date, 'run'),
+          weeks: weeklyRuns(acts, date, 12),
+          error: false,
+        };
+      },
+      () => ({ list: [], run: null, weeks: null, error: true }),
+    )
+  : null;
+
+// Tira semanal: 7 días que terminan en el día elegido (o unos días después si los hay).
+const stripEnd = date === today ? today : addDays(date, 3) > today ? today : addDays(date, 3);
+const data = await getAllData();
+const analysis = analyze(data, stripEnd);
+const idx = analysis.days.indexOf(date);
+const score = analysis.scores[idx];
+const alerts = alertsFor(analysis, date);
+const loggedDates = new Set([...data.entries.map((e) => e.date), ...data.answers.map((a) => a.date)]);
+const strip = dayRange(addDays(stripEnd, -6), stripEnd).map((d) => {
+  const s = analysis.scores[analysis.days.indexOf(d)];
+  const dt = new Date(`${d}T00:00:00Z`);
+  return {
+    date: d,
+    wd: dt.toLocaleDateString('es-ES', { weekday: 'short', timeZone: 'UTC' }).replace('.', ''),
+    num: dt.getUTCDate(),
+    zone: s?.zone ?? 'none',
+    logged: loggedDates.has(d),
+  };
+});
+
+// Preguntas activas y, si las hay, las desactivadas que se respondieron este día.
+const questions = data.questions.filter((q) => q.active || day.answers[q.id] !== undefined);
+const answered = questions.filter((q) => day.answers[q.id] !== undefined);
+const answeredCount = answered.length;
+// Media en "bondad" (0 = mal, 4 = bien): las preguntas de cantidad se invierten.
+const answersAvg = answeredCount ? answered.reduce((a, q) => a + goodness(q, day.answers[q.id]), 0) / answeredCount : null;
+
+// Comparación con la media de los 7 días anteriores (el readiness sigue usando la base de 60 días).
+const mean7 = Object.fromEntries(METRICS.map((m) => [m.key, idx >= 0 ? recentMean(analysis.series[m.key], idx) : null])) as Record<
+  MetricKey,
+  number | null
+>;
+
+function signedZ(m: MetricDef, z: number) {
+  return m.direction === 'higher' ? z : m.direction === 'lower' ? -z : -Math.abs(z);
+}
+/** Color según cuánto se aleja el valor de la media de 7 días, medido en DE de tu base. */
+function toneOf(m: MetricDef): string {
+  const v = day.entry?.[m.key];
+  const mu = mean7[m.key];
+  const sd = score?.baselines[m.key]?.sd;
+  if (v == null || mu === null || !sd || m.direction === 'none') return '';
+  const s = signedZ(m, (v - mu) / sd);
+  return s <= -1.5 ? 'bad' : s <= -0.75 ? 'meh' : s >= 0.75 && m.direction !== 'deviation' ? 'good' : '';
+}
+function hint(m: MetricDef) {
+  const mu = mean7[m.key];
+  return mu !== null ? `media ${RECENT_DAYS} d: ${round(mu, 1)}` : (m.help ?? 'sin datos previos');
+}
+
+const keyStat = (k: MetricKey, label?: string): KeyStat => {
+  const m = METRIC_BY_KEY[k];
+  const v = day.entry?.[k] ?? null;
+  const mu = mean7[k];
+  let delta: KeyStat['delta'] = null;
+  if (v !== null && mu !== null) {
+    const diff = round(v - mu, 1)!;
+    delta = { text: `${diff > 0 ? '+' : diff < 0 ? '−' : '±'}${Math.abs(diff)}`, cls: toneOf(m) || 'neutral' };
+  }
+  return {
+    label: label ?? m.label,
+    value: v,
+    unit: m.unit.startsWith('/') ? '' : m.unit,
+    icon: METRIC_ICONS[k],
+    delta,
+    mean: mu !== null ? round(mu, 1) : null,
+  };
+};
+const stats = [keyStat('hrv'), keyStat('resting_hr', 'FC reposo'), keyStat('sleep_score', 'Sueño')];
+
+const workout = workoutP ? await workoutP : null;
+const assessment = assess({ score, values: day.entry ?? {}, mean7, subjAvg: answersAvg });
+
+const primaryGroups = (['recuperacion', 'sueno'] as const).map((g) => ({ label: GROUP_LABELS[g], metrics: METRICS.filter((m) => m.group === g) }));
+const secondary = METRICS.filter((m) => m.group === 'fisiologia' || m.group === 'carga');
+const secondaryFilled = secondary.filter((m) => day.entry?.[m.key] != null).length;
+const sourceLabel = { manual: 'Manual', intervals: 'intervals.icu', mixed: 'intervals.icu + manual' };
+const hour = Number(new Intl.DateTimeFormat('es-ES', { hour: 'numeric', hour12: false, timeZone: env.TZ_NAME || 'Europe/Madrid' }).format(new Date()));
+const greeting = date !== today ? 'Registro' : hour < 13 ? 'Buenos días' : hour < 20 ? 'Buenas tardes' : 'Buenas noches';
+---
+
+<Base title="Hoy">
+  <div class="stack">
+    <header class="head">
+      <div>
+        <span class="eyebrow">{formatLong(date)}{date === today && ' · hoy'}</span>
+        <h1>{greeting}</h1>
+      </div>
+      <label class="cal btn" title="Elegir fecha">
+        <Icon name="calendar" size={19} />
+        <input type="date" id="datepick" value={date} max={today} aria-label="Elegir fecha" />
+      </label>
+    </header>
+
+    <nav class="week" aria-label="Últimos días">
+      {
+        strip.map((d) => (
+          <a
+            href={d.date === today ? '/' : `/?date=${d.date}`}
+            class:list={['wd', `zone-${d.zone}`, { active: d.date === date, logged: d.logged }]}
+            aria-current={d.date === date ? 'date' : undefined}>
+            <span class="wd-name">{d.wd}</span>
+            <span class="wd-num num">{d.num}</span>
+            <span class="dot" />
+          </a>
+        ))
+      }
+    </nav>
+
+    <ReadinessCard score={score} alerts={alerts} stats={stats} />
+
+    <AssessmentCard a={assessment} />
+
+    {workout && <LastWorkoutCard list={workout.list} run={workout.run} date={date} error={workout.error} />}
+
+    {workout?.weeks && <WeeklyRunsCard weeks={workout.weeks} date={date} />}
+
+    {
+      syncNote && (
+        <p class={`note ${syncNote.kind}`}>
+          <Icon name={syncNote.kind === 'error' ? 'alert' : syncNote.kind === 'ok' ? 'check' : 'info'} size={17} />
+          <span>{syncNote.text}</span>
+        </p>
+      )
+    }
+
+    <form id="checkin" class="stack" data-date={date} novalidate>
+      <section class="card">
+        <div class="card-head">
+          <span class="icon-badge"><Icon name="pulse" size={18} /></span>
+          <div>
+            <h2>Datos del reloj</h2>
+            <span class="muted small">{day.entry ? `Fuente: ${sourceLabel[day.entry.source]}` : 'Desde intervals.icu o a mano'}</span>
+          </div>
+          <div class="spacer"></div>
+          {
+            canSync && (
+              <button type="button" id="reimport" class="soft small" title="Vuelve a traer los datos de intervals.icu y sobrescribe los de este día">
+                <Icon name="refresh" size={16} /> Reimportar
+              </button>
+            )
+          }
+        </div>
+
+        {
+          primaryGroups.map((g) => (
+            <div class="group">
+              <span class="eyebrow">{g.label}</span>
+              <div class="tiles">
+                {g.metrics.map((m) => (
+                  <label class:list={['tile', toneOf(m)]}>
+                    <span class="tile-top">
+                      <Icon name={METRIC_ICONS[m.key]} size={16} />
+                      {m.label}
+                    </span>
+                    <span class="tile-input">
+                      <input
+                        class="num"
+                        type="number"
+                        inputmode="decimal"
+                        name={m.key}
+                        min={m.min}
+                        max={m.max}
+                        step={m.step}
+                        placeholder="–"
+                        value={day.entry?.[m.key] ?? ''}
+                      />
+                      <span class="unit">{m.unit}</span>
+                    </span>
+                    <span class={`chip ${toneOf(m)}`}>{hint(m)}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))
+        }
+
+        <details class="more">
+          <summary>
+            <span>Fisiología y carga</span>
+            <span class="muted small">{secondaryFilled}/{secondary.length} con dato</span>
+            <span class="spacer"></span>
+            <Icon name="chevronD" size={18} class="chev" />
+          </summary>
+          <div class="tiles">
+            {
+              secondary.map((m) => (
+                <label class:list={['tile', toneOf(m)]}>
+                  <span class="tile-top">
+                    <Icon name={METRIC_ICONS[m.key]} size={16} />
+                    {m.label}
+                  </span>
+                  <span class="tile-input">
+                    <input
+                      class="num"
+                      type="number"
+                      inputmode="decimal"
+                      name={m.key}
+                      min={m.min}
+                      max={m.max}
+                      step={m.step}
+                      placeholder="–"
+                      value={day.entry?.[m.key] ?? ''}
+                    />
+                    <span class="unit">{m.unit}</span>
+                  </span>
+                  <span class={`chip ${toneOf(m)}`}>{hint(m)}</span>
+                </label>
+              ))
+            }
+          </div>
+        </details>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <span class="icon-badge"><Icon name="smile" size={18} /></span>
+          <div>
+            <h2>Sensaciones</h2>
+            <span class="muted small">Media de 0 (mal) a {ANSWER_MAX} (bien)</span>
+          </div>
+          <div class="spacer"></div>
+          {
+            questions.length > 0 && (
+              <span class="avg" id="qavg" data-max={ANSWER_MAX} title="Media de las respuestas de hoy">
+                <span class="avg-label">Media</span>
+                <span class="num avg-val">{answersAvg === null ? '–' : answersAvg.toFixed(1).replace('.', ',')}</span>
+              </span>
+            )
+          }
+          {
+            questions.length > 0 && (
+              <span class="progress" id="qprogress" data-total={questions.length}>
+                <svg viewBox="0 0 36 36" width="34" height="34" aria-hidden="true">
+                  <circle cx="18" cy="18" r="15" fill="none" stroke="var(--surface-3)" stroke-width="4" />
+                  <circle
+                    class="pg"
+                    cx="18"
+                    cy="18"
+                    r="15"
+                    fill="none"
+                    stroke="var(--accent)"
+                    stroke-width="4"
+                    stroke-linecap="round"
+                    stroke-dasharray={`${(answeredCount / questions.length) * 94.25} 94.25`}
+                    transform="rotate(-90 18 18)"
+                  />
+                </svg>
+                <span class="num pg-text">
+                  {answeredCount}/{questions.length}
+                </span>
+              </span>
+            )
+          }
+        </div>
+        {questions.length === 0 && <p class="muted">No hay preguntas activas. Añádelas en <a href="/ajustes">Ajustes</a>.</p>}
+        {questions.map((q) => <LikertQuestion q={q} value={day.answers[q.id]} />)}
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <span class="icon-badge"><Icon name="note" size={18} /></span>
+          <h2>Notas</h2>
+        </div>
+        <textarea name="notes" maxlength="2000" placeholder="Entreno de ayer, alcohol, viaje, molestias…" aria-label="Notas">{day.entry?.notes ?? ''}</textarea>
+      </section>
+
+      <div class="actions">
+        <button type="submit" class="primary save"><Icon name="check" size={19} stroke={2.4} /> Guardar registro</button>
+      </div>
+    </form>
+  </div>
+</Base>
+
+<script>
+  import { api, reloadWithToast, toast } from '../lib/client';
+
+  const form = document.getElementById('checkin') as HTMLFormElement;
+  const date = form.dataset.date!;
+
+  const picker = document.getElementById('datepick') as HTMLInputElement;
+  picker.addEventListener('change', () => {
+    if (picker.value) location.href = `/?date=${picker.value}`;
+  });
+  picker.parentElement!.addEventListener('click', () => {
+    try {
+      picker.showPicker();
+    } catch {}
+  });
+
+  // Ajusta el ancho de cada campo a su contenido para que la unidad quede pegada al número.
+  form.querySelectorAll<HTMLInputElement>('.tile-input input').forEach((i) => {
+    const fit = () => (i.style.width = `${Math.max(i.value.length, 1) + 0.15}ch`);
+    fit();
+    i.addEventListener('input', fit);
+  });
+
+  // Progreso de respuestas.
+  const progress = document.getElementById('qprogress');
+  // Media de sensaciones (0-4) coloreada: cerca de 4 bien, cerca de 0 mal.
+  const avgEl = document.getElementById('qavg');
+  function updateAvg() {
+    if (!avgEl) return;
+    const max = Number(avgEl.dataset.max);
+    // Las preguntas de cantidad (data-inv=1) se invierten: 0 = nada cuenta como lo mejor.
+    const vals = [...form.querySelectorAll<HTMLFieldSetElement>('.likert')].flatMap((f) => {
+      const c = f.querySelector<HTMLInputElement>('input:checked');
+      return c ? [f.dataset.inv === '1' ? max - Number(c.value) : Number(c.value)] : [];
+    });
+    const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    avgEl.querySelector('.avg-val')!.textContent = avg === null ? '–' : avg.toFixed(1).replace('.', ',');
+    avgEl.className = `avg ${avg === null ? '' : avg >= max * 0.7 ? 'good' : avg >= max * 0.45 ? 'meh' : 'bad'}`;
+  }
+  updateAvg();
+
+  function updateProgress() {
+    updateAvg();
+    if (!progress) return;
+    const total = Number(progress.dataset.total);
+    const done = form.querySelectorAll('.likert input:checked').length;
+    progress.querySelector('.pg')!.setAttribute('stroke-dasharray', `${(done / total) * 94.25} 94.25`);
+    progress.querySelector('.pg-text')!.textContent = `${done}/${total}`;
+  }
+
+  // Pulsar de nuevo una respuesta marcada la desmarca.
+  form.querySelectorAll<HTMLInputElement>('.likert input[type=radio]').forEach((r) => {
+    r.addEventListener('pointerdown', () => (r.dataset.was = String(r.checked)));
+    r.addEventListener('click', () => {
+      if (r.dataset.was === 'true') r.checked = false;
+      r.dataset.was = 'false';
+      updateProgress();
+    });
+    r.addEventListener('change', updateProgress);
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector<HTMLButtonElement>('button.save')!;
+    const metrics: Record<string, string> = {};
+    form.querySelectorAll<HTMLInputElement>('.tile input').forEach((i) => (metrics[i.name] = i.value));
+    const answers: Record<string, number> = {};
+    form.querySelectorAll<HTMLFieldSetElement>('.likert').forEach((f) => {
+      const c = f.querySelector<HTMLInputElement>('input:checked');
+      if (c) answers[f.dataset.qid!] = Number(c.value);
+    });
+    const notes = (form.elements.namedItem('notes') as HTMLTextAreaElement).value;
+    btn.disabled = true;
+    try {
+      await api('/api/entries', 'POST', { date, metrics, answers, notes });
+      reloadWithToast('Registro guardado');
+    } catch (err) {
+      toast((err as Error).message, true);
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('reimport')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement;
+    btn.disabled = true;
+    try {
+      const r = await api<{ imported: number }>('/api/intervals/sync', 'POST', { oldest: date, newest: date, overwrite: true });
+      reloadWithToast(r.imported ? 'Datos reimportados de intervals.icu' : 'intervals.icu no tiene datos de este día');
+    } catch (err) {
+      toast((err as Error).message, true);
+      btn.disabled = false;
+    }
+  });
+</script>
+
+<style>
+  .head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .head h1 {
+    font-size: 2rem;
+    margin-top: 2px;
+  }
+  .cal {
+    position: relative;
+    width: 46px;
+    height: 46px;
+    padding: 0;
+    border-radius: 14px;
+    flex: none;
+  }
+  .cal input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    min-height: 0;
+    padding: 0;
+  }
+
+  .week {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+  }
+  .wd {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 9px 0 8px;
+    border-radius: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    text-decoration: none;
+    transition: transform 0.12s, background 0.15s, border-color 0.15s;
+  }
+  .wd:hover {
+    border-color: var(--border-strong);
+    transform: translateY(-1px);
+  }
+  .wd-name {
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .wd-num {
+    font-size: 1.1rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: transparent;
+  }
+  .wd.logged .dot {
+    background: var(--zone);
+  }
+  .wd.active {
+    background: var(--text);
+    border-color: var(--text);
+    color: var(--bg);
+  }
+  .wd.active .wd-name {
+    color: color-mix(in srgb, var(--bg) 70%, transparent);
+  }
+
+  .note {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin: 0;
+    padding: 12px 14px;
+    border-radius: 14px;
+    font-size: 0.87rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+  }
+  .note :global(svg) {
+    flex: none;
+    margin-top: 1px;
+    color: var(--accent);
+  }
+  .note.ok :global(svg) {
+    color: var(--green);
+  }
+  .note.error {
+    background: var(--red-soft);
+    border-color: transparent;
+  }
+  .note.error :global(svg) {
+    color: var(--red);
+  }
+
+  .group + .group {
+    margin-top: 18px;
+  }
+  .group > .eyebrow {
+    display: block;
+    margin-bottom: 8px;
+  }
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  .tile {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 12px 10px;
+    border-radius: 16px;
+    background: var(--surface-2);
+    border: 1.5px solid transparent;
+    cursor: text;
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+    min-width: 0;
+  }
+  .tile:hover {
+    border-color: var(--border-strong);
+  }
+  .tile:focus-within {
+    background: var(--surface);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-soft);
+  }
+  .tile.bad {
+    background: var(--red-soft);
+  }
+  .tile-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tile-input {
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+    cursor: text;
+  }
+  .tile-input input {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    min-height: 0;
+    box-shadow: none;
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 1.2;
+    width: 2.2ch;
+    max-width: 100%;
+    min-width: 1.6ch;
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+  .tile-input input::-webkit-outer-spin-button,
+  .tile-input input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .tile-input input::placeholder {
+    color: var(--border-strong);
+  }
+  .tile-input input:focus {
+    box-shadow: none;
+    background: transparent;
+  }
+  .unit {
+    font-size: 0.8rem;
+    color: var(--muted);
+    flex: none;
+  }
+  .tile .chip {
+    align-self: flex-start;
+    background: var(--surface);
+  }
+  .tile .chip.good {
+    background: var(--green-soft);
+  }
+  .tile .chip.meh {
+    background: var(--amber-soft);
+  }
+  .tile .chip.bad {
+    background: var(--surface);
+  }
+
+  .more {
+    margin-top: 18px;
+    border-top: 1px solid var(--border);
+    padding-top: 6px;
+  }
+  .more summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 2px;
+    cursor: pointer;
+    list-style: none;
+    font-weight: 600;
+    border-radius: 10px;
+  }
+  .more summary::-webkit-details-marker {
+    display: none;
+  }
+  .more :global(.chev) {
+    color: var(--muted);
+    transition: transform 0.2s;
+  }
+  .more[open] :global(.chev) {
+    transform: rotate(180deg);
+  }
+  .more .tiles {
+    margin-top: 6px;
+  }
+
+  .avg {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 52px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    color: var(--muted);
+    line-height: 1.1;
+  }
+  .avg-label {
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .avg-val {
+    font-size: 1.05rem;
+    font-weight: 700;
+  }
+  .avg.good {
+    background: var(--green-soft);
+    color: var(--green);
+  }
+  .avg.meh {
+    background: var(--amber-soft);
+    color: var(--amber);
+  }
+  .avg.bad {
+    background: var(--red-soft);
+    color: var(--red);
+  }
+
+  .progress {
+    position: relative;
+    display: grid;
+    place-items: center;
+  }
+  .pg {
+    transition: stroke-dasharray 0.3s;
+  }
+  .pg-text {
+    position: absolute;
+    font-size: 0.62rem;
+    font-weight: 700;
+  }
+
+  .actions {
+    position: sticky;
+    bottom: calc(92px + env(safe-area-inset-bottom));
+    z-index: 5;
+  }
+  .actions .save {
+    width: 100%;
+    min-height: 54px;
+    font-size: 1.02rem;
+    border-radius: 18px;
+  }
+
+  @media (max-width: 420px) {
+    .tiles {
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .week {
+      gap: 4px;
+    }
+    .head h1 {
+      font-size: 1.75rem;
+    }
+  }
+</style>

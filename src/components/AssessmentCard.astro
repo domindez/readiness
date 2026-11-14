@@ -1,0 +1,91 @@
+---
+import Icon from './Icon.astro';
+import type { IconName } from '../lib/icons';
+import type { Assessment } from '../lib/assessment';
+
+interface Props {
+  a: Assessment;
+}
+const { a } = Astro.props;
+const icon: IconName = { quality: 'bolt', normal: 'check', easy: 'trend', recovery: 'heart', rest: 'moon', unknown: 'info' }[a.level] as IconName;
+const zone = { quality: 'green', normal: 'green', easy: 'amber', recovery: 'amber', rest: 'red', unknown: 'none' }[a.level];
+const dotIcon: Record<string, IconName> = { good: 'check', meh: 'info', bad: 'alert', neutral: 'info' };
+---
+
+<section class:list={['card', 'assess', `zone-${zone}`]} aria-label="Valoración de hoy">
+  <div class="card-head">
+    <span class="icon-badge lvl"><Icon name={icon} size={18} stroke={2.2} /></span>
+    <div>
+      <span class="eyebrow">Recomendación de hoy</span>
+      <h2>{a.title}</h2>
+    </div>
+  </div>
+  <p class="session">{a.session}</p>
+  {
+    a.reasons.length > 0 && (
+      <ul class="reasons">
+        {a.reasons.map((r) => (
+          <li class={r.tone}>
+            <Icon name={dotIcon[r.tone]} size={15} stroke={2.2} />
+            <span>{r.text}</span>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+  <p class="foot">Teniendo en cuenta las métricas nocturnas del reloj, el cuestionario, la carga de ayer y tu forma. Es orientativo.</p>
+</section>
+
+<style>
+  .assess {
+    border-left: 4px solid var(--zone, var(--border));
+  }
+  .card-head {
+    margin-bottom: 8px;
+  }
+  .lvl {
+    background: var(--zone-soft, var(--accent-soft));
+    color: var(--zone, var(--accent));
+  }
+  h2 {
+    color: var(--zone, var(--text));
+  }
+  .session {
+    margin: 0 0 12px;
+    color: var(--text);
+    font-size: 0.95rem;
+  }
+  .reasons {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+  }
+  .reasons li {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    font-size: 0.85rem;
+    color: var(--text-2);
+  }
+  .reasons li :global(svg) {
+    flex: none;
+    margin-top: 2px;
+    color: var(--muted);
+  }
+  .reasons li.good :global(svg) {
+    color: var(--green);
+  }
+  .reasons li.meh :global(svg) {
+    color: var(--amber);
+  }
+  .reasons li.bad :global(svg) {
+    color: var(--red);
+  }
+  .foot {
+    margin: 12px 0 0;
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+</style>

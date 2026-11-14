@@ -1,0 +1,351 @@
+---
+import Icon from './Icon.astro';
+import type { IconName } from '../lib/icons';
+import { adviceFor, type Alert, type DayScore } from '../lib/readiness';
+import { RECENT_DAYS } from '../lib/stats';
+
+export interface KeyStat {
+  label: string;
+  value: number | null;
+  unit: string;
+  icon: IconName;
+  /** Diferencia con esa media. */
+  delta: { text: string; cls: string } | null;
+  /** Media de los RECENT_DAYS días anteriores. */
+  mean: number | null;
+}
+
+interface Props {
+  score: DayScore | undefined;
+  alerts: Alert[];
+  stats: KeyStat[];
+}
+const { score, alerts, stats } = Astro.props;
+const zone = score?.zone ?? 'none';
+const value = score?.score ?? null;
+const zoneLabel = { green: 'Listo para cargar', amber: 'Con precaución', red: 'Prioriza recuperar', none: 'Sin datos suficientes' }[zone];
+const zoneIcon: IconName = { green: 'check', amber: 'info', red: 'alert', none: 'info' }[zone] as IconName;
+const R = 62;
+const C = 2 * Math.PI * R;
+const dash = value === null ? 0 : (value / 100) * C;
+const bars = [
+  { label: 'Reloj', v: score?.objective ?? null },
+  { label: 'Sensaciones', v: score?.subjective ?? null },
+];
+---
+
+<section class:list={['card', 'hero', `zone-${zone}`]} aria-label="Readiness del día">
+  <div class="top">
+    <div class="ring" role="img" aria-label={value === null ? 'Sin puntuación' : `Readiness ${value} de 100: ${zoneLabel}`}>
+      <svg viewBox="0 0 150 150" aria-hidden="true">
+        <defs>
+          <linearGradient id="ring-grad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="var(--zone)" stop-opacity="0.65"></stop>
+            <stop offset="100%" stop-color="var(--zone)"></stop>
+          </linearGradient>
+        </defs>
+        <circle cx="75" cy="75" r={R} fill="none" stroke="var(--surface-3)" stroke-width="11"></circle>
+        <circle
+          class="arc"
+          cx="75"
+          cy="75"
+          r={R}
+          fill="none"
+          stroke="url(#ring-grad)"
+          stroke-width="11"
+          stroke-linecap="round"
+          stroke-dasharray={`${dash} ${C}`}
+          transform="rotate(-90 75 75)"></circle>
+      </svg>
+      <div class="ring-value">
+        <strong class="num">{value ?? '–'}</strong>
+        <span>de 100</span>
+      </div>
+    </div>
+
+    <div class="info">
+      <span class="eyebrow">Readiness</span>
+      <div class="zone-label">
+        <Icon name={zoneIcon} size={20} stroke={2.4} />
+        <span>{zoneLabel}</span>
+      </div>
+      {zone === 'none' && <p class="advice">{adviceFor(zone)}</p>}
+      <div class="bars">
+        {
+          bars.map((b) => (
+            <div class="bar">
+              <span class="bar-label">{b.label}</span>
+              <span class="track">
+                <span class="fill" style={`width:${b.v ?? 0}%`} />
+              </span>
+              <span class="bar-val num">{b.v ?? '–'}</span>
+            </div>
+          ))
+        }
+      </div>
+    </div>
+  </div>
+
+  {
+    stats.length > 0 && (
+      <div class="stats">
+        {stats.map((s) => (
+          <div class="stat">
+            <span class="stat-label">
+              <Icon name={s.icon} size={15} />
+              <span>{s.label}</span>
+            </span>
+            <span class="stat-value">
+              <span class="num">{s.value ?? '–'}</span>
+              {s.value !== null && s.unit && <small>{s.unit}</small>}
+            </span>
+            {s.delta ? <span class={`chip ${s.delta.cls}`}>{s.delta.text}</span> : s.mean === null && <span class="chip">sin base</span>}
+            {s.mean !== null && <span class="stat-mean">media <span class="num">{s.mean}</span></span>}
+          </div>
+        ))}
+      </div>
+      <p class="stats-note">Comparado con tu media de los {RECENT_DAYS} días anteriores</p>
+    )
+  }
+
+  {
+    alerts.length > 0 && (
+      <ul class="alerts">
+        {alerts.map((a) => (
+          <li class={a.level}>
+            <Icon name="alert" size={17} stroke={2.2} />
+            <span>{a.text}</span>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding: 22px;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(420px 220px at 0% 0%, var(--zone-soft), transparent 70%);
+    pointer-events: none;
+  }
+  .top {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 22px;
+    align-items: center;
+  }
+  .ring {
+    position: relative;
+    width: 150px;
+    height: 150px;
+  }
+  .ring svg {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .arc {
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--zone) 45%, transparent));
+    transition: stroke-dasharray 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .ring-value {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    text-align: center;
+  }
+  .ring-value strong {
+    font-size: 3.1rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .ring-value span {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .zone-label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 4px;
+    font-family: var(--font-display);
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: var(--zone);
+    letter-spacing: -0.01em;
+  }
+  .zone-label + .bars {
+    margin-top: 14px;
+  }
+  .advice {
+    margin: 6px 0 14px;
+    color: var(--text-2);
+    font-size: 0.92rem;
+  }
+  .bars {
+    display: grid;
+    gap: 8px;
+  }
+  .bar {
+    display: grid;
+    grid-template-columns: 88px 1fr 30px;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.8rem;
+  }
+  .bar-label {
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .track {
+    height: 6px;
+    border-radius: 99px;
+    background: var(--surface-3);
+    overflow: hidden;
+  }
+  .fill {
+    display: block;
+    height: 100%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  }
+  .bar-val {
+    text-align: right;
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+
+  .stats {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-top: 20px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 12px;
+    border-radius: 16px;
+    background: var(--surface-2);
+    min-width: 0;
+  }
+  .stat-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--muted);
+    white-space: nowrap;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .stat-label :global(svg) {
+    flex: none;
+  }
+  .stat-label > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .stat .chip {
+    max-width: 100%;
+  }
+  .stat-mean {
+    font-size: 0.72rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .stat-mean .num {
+    font-weight: 650;
+    color: var(--text-2);
+  }
+  .stats-note {
+    position: relative;
+    margin: 8px 2px 0;
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+  .stat-value {
+    white-space: nowrap;
+  }
+  .stat-value .num {
+    font-size: 1.55rem;
+    font-weight: 600;
+    line-height: 1.1;
+  }
+  .stat-value small {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-left: 3px;
+  }
+
+  .alerts {
+    position: relative;
+    list-style: none;
+    margin: 16px 0 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+  }
+  .alerts li {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 10px 12px;
+    border-radius: 14px;
+    font-size: 0.87rem;
+    background: var(--amber-soft);
+    color: var(--text);
+  }
+  .alerts li :global(svg) {
+    flex: none;
+    margin-top: 1px;
+    color: var(--amber);
+  }
+  .alerts li.danger {
+    background: var(--red-soft);
+  }
+  .alerts li.danger :global(svg) {
+    color: var(--red);
+  }
+
+  @media (max-width: 560px) {
+    .top {
+      grid-template-columns: 1fr;
+      justify-items: center;
+      text-align: center;
+      gap: 14px;
+    }
+    .zone-label {
+      justify-content: center;
+    }
+    .info {
+      width: 100%;
+    }
+    .bar {
+      text-align: left;
+    }
+    .stats {
+      gap: 8px;
+    }
+    .stat {
+      padding: 10px;
+    }
+    .stat-value .num {
+      font-size: 1.3rem;
+    }
+  }
+</style>

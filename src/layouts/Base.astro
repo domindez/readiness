@@ -1,0 +1,100 @@
+---
+import '../styles/global.css';
+import Icon from '../components/Icon.astro';
+import type { IconName } from '../lib/icons';
+
+interface Props {
+  title: string;
+}
+const { title } = Astro.props;
+const path = Astro.url.pathname;
+const nav: { href: string; label: string; icon: IconName }[] = [
+  { href: '/', label: 'Hoy', icon: 'sun' },
+  { href: '/tendencias', label: 'Tendencias', icon: 'trend' },
+  { href: '/historial', label: 'Historial', icon: 'list' },
+  { href: '/ajustes', label: 'Ajustes', icon: 'settings' },
+];
+const isActive = (href: string) => (href === '/' ? path === '/' : path.startsWith(href));
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#f4f5f9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0a0c12" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <title>{title} · Readiness</title>
+  </head>
+  <body>
+    <main>
+      <slot />
+    </main>
+    <nav class="tabbar" aria-label="Principal">
+      {
+        nav.map((n) => (
+          <a href={n.href} class:list={[{ active: isActive(n.href) }]} aria-current={isActive(n.href) ? 'page' : undefined}>
+            <Icon name={n.icon} size={22} />
+            <span>{n.label}</span>
+          </a>
+        ))
+      }
+    </nav>
+    <script>
+      import { toast } from '../lib/client';
+      // Mensaje pendiente tras recargar (p. ej. "Guardado").
+      try {
+        const m = sessionStorage.getItem('toast');
+        if (m) {
+          sessionStorage.removeItem('toast');
+          toast(m);
+        }
+      } catch {}
+    </script>
+  </body>
+</html>
+
+<style>
+  .tabbar {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    width: min(440px, calc(100vw - 24px));
+    display: flex;
+    gap: 2px;
+    padding: 6px;
+    border-radius: 22px;
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+    backdrop-filter: blur(16px) saturate(1.4);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    z-index: 40;
+  }
+  .tabbar a {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 7px 4px 6px;
+    border-radius: 16px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.7rem;
+    font-weight: 600;
+    transition: color 0.15s, background 0.15s;
+  }
+  .tabbar a:hover {
+    color: var(--text);
+  }
+  .tabbar a.active {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+</style>

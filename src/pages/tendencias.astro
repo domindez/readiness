@@ -1,0 +1,433 @@
+---
+import { env } from 'cloudflare:workers';
+import Base from '../layouts/Base.astro';
+import Icon from '../components/Icon.astro';
+import { getAllData } from '../lib/db';
+import { todayIn } from '../lib/dates';
+import { METRIC_ICONS } from '../lib/icons';
+import { buildTrends, RANGES, type SeriesPayload } from '../lib/trends';
+
+const today = todayIn(env.TZ_NAME || 'Europe/Madrid');
+const rangeKey = RANGES.some((r) => r.key === Astro.url.searchParams.get('range')) ? Astro.url.searchParams.get('range')! : '30';
+const data = await getAllData();
+const hasData = data.entries.length > 0 || data.answers.length > 0;
+const payload = buildTrends(data, today, rangeKey);
+const isAll = rangeKey === 'all';
+const readiness = payload.series.find((s) => s.id === 'readiness')!;
+const others = payload.series.filter((s) => s.id !== 'readiness');
+const groups = [...new Set(others.map((s) => s.group))];
+
+// Reparto de días por zona en el periodo.
+const zoneCounts = { green: 0, amber: 0, red: 0 };
+readiness.zones?.forEach((z, i) => {
+  if (readiness.values[i] !== null && z in zoneCounts) zoneCounts[z as keyof typeof zoneCounts]++;
+});
+const zoneTotal = zoneCounts.green + zoneCounts.amber + zoneCounts.red;
+
+function trend(s: SeriesPayload) {
+  const { avg, prevAvg } = s.summary;
+  if (avg === null || prevAvg === null || prevAvg === 0) return null;
+  const diff = avg - prevAvg;
+  const pct = (diff / Math.abs(prevAvg)) * 100;
+  const better = s.direction === 'higher' ? diff > 0 : s.direction === 'lower' ? diff < 0 : null;
+  const tiny = Math.abs(pct) < 2;
+  return {
+    text: `${diff > 0 ? '↑' : diff < 0 ? '↓' : ''} ${Math.abs(pct).toFixed(0)}%`,
+    cls: tiny || better === null ? '' : better ? 'good' : 'bad',
+  };
+}
+const fmt = (v: number | null) => (v === null ? '–' : Number.isInteger(v) ? String(v) : v.toFixed(1));
+const unitOf = (s: SeriesPayload) => (s.kind === 'question' || !s.unit || s.unit.startsWith('/') ? '' : s.unit);
+const rt = trend(readiness);
+---
+
+<Base title="Tendencias">
+  <div class="stack">
+    <header>
+      <span class="eyebrow">Evolución</span>
+      <h1>Tendencias</h1>
+    </header>
+
+    <nav class="ranges" aria-label="Periodo">
+      {RANGES.map((r) => <a href={`/tendencias?range=${r.key}`} class:list={[{ active: r.key === rangeKey }]} aria-current={r.key === rangeKey ? 'page' : undefined}>{r.label}</a>)}
+    </nav>
+
+    {
+      !hasData ? (
+        <div class="card empty">
+          <span class="icon-badge"><Icon name="trend" /></span>
+          <p>Todavía no hay registros. Empieza en <a href="/">Hoy</a> o importa tu histórico de intervals.icu en <a href="/ajustes">Ajustes</a>.</p>
+        </div>
+      ) : (
+        <>
+          <section class="card hero-chart">
+            <div class="hero-head">
+              <div>
+                <span class="eyebrow">Readiness medio</span>
+                <div class="big">
+                  <span class="num">{fmt(readiness.summary.avg)}</span>
+                  {!isAll && rt && <span class={`chip ${rt.cls}`} title="Frente al periodo anterior">{rt.text}</span>}
+                </div>
+              </div>
+              {zoneTotal > 0 && (
+                <div class="zones" aria-label="Días por zona">
+                  <div class="zone-bar" aria-hidden="true">
+                    {(['green', 'amber', 'red'] as const).map((z) => zoneCounts[z] > 0 && <span class={`zone-${z}`} style={`flex:${zoneCounts[z]}`} />)}
+                  </div>
+                  <div class="zone-legend small">
+                    <span class="zone-green"><i />{zoneCounts.green} listo</span>
+                    <span class="zone-amber"><i />{zoneCounts.amber} precaución</span>
+                    <span class="zone-red"><i />{zoneCounts.red} recuperar</span>
+                  </div>
+                </div>
+              )}
+            </div>
+            <button type="button" class="chart-zoom" data-id="readiness" aria-label="Ampliar readiness">
+              <div class="canvas-wrap tall">
+                <canvas />
+              </div>
+            </button>
+          </section>
+
+          <p class="legend small">
+            <span><i class="sw line" />Valor diario</span>
+            <span><i class="sw avg" />Media 7 días</span>
+            <span><i class="sw band" />Tu rango normal · base 60 d ± 1 DE</span>
+          </p>
+
+          {groups.map((g) => (
+            <section class="stack">
+              <h2 class="group-title">{g}</h2>
+              <div class="grid">
+                {others
+                  .filter((s) => s.group === g)
+                  .map((s) => {
+                    const t = trend(s);
+                    return (
+                      <button type="button" class="card chart-card chart-zoom" data-id={s.id} aria-label={`Ampliar ${s.label}`}>
+                        <div class="chart-head">
+                          <span class="icon-badge sm">
+                            <Icon name={METRIC_ICONS[s.id] ?? 'smile'} size={16} />
+                          </span>
+                          <div class="titles">
+                            <h3>{s.label}</h3>
+                            <span class="muted small sub">{s.kind === 'question' ? s.unit : 'media del periodo'}</span>
+                          </div>
+                          <div class="nums">
+                            <span class="value-row">
+                              <span class="num value">{fmt(s.summary.avg)}</span>
+                              {unitOf(s) && <span class="u">{unitOf(s)}</span>}
+                            </span>
+                            {!isAll && t && (
+                              <span class={`chip ${t.cls}`} title="Frente al periodo anterior de igual duración">
+                                {t.text}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div class="canvas-wrap">
+                          <canvas />
+                        </div>
+                        <div class="foot small">
+                          <span>
+                            Último <b class="num">{fmt(s.summary.last)}</b>
+                          </span>
+                          <span>
+                            {s.summary.n} {s.summary.n === 1 ? 'día' : 'días'} con dato
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+              </div>
+            </section>
+          ))}
+        </>
+      )
+    }
+  </div>
+
+  <dialog id="zoom">
+    <div class="row">
+      <h2 id="zoom-title"></h2>
+      <div class="spacer"></div>
+      <button type="button" class="ghost" id="zoom-close" aria-label="Cerrar"><Icon name="x" size={20} /></button>
+    </div>
+    <div class="zoom-wrap"><canvas id="zoom-canvas"></canvas></div>
+  </dialog>
+
+  <script type="application/json" id="trend-data" set:html={JSON.stringify(payload).replace(/</g, '\\u003c')} />
+</Base>
+
+<script>
+  import type { Chart } from 'chart.js';
+  import { buildChart } from '../lib/charts';
+  import type { TrendsPayload } from '../lib/trends';
+
+  const payload = JSON.parse(document.getElementById('trend-data')!.textContent!) as TrendsPayload;
+  const byId = new Map(payload.series.map((s) => [s.id, s]));
+  const charts: Chart[] = [];
+
+  function renderAll() {
+    charts.splice(0).forEach((c) => c.destroy());
+    document.querySelectorAll<HTMLButtonElement>('.chart-zoom').forEach((card) => {
+      const s = byId.get(card.dataset.id!);
+      if (s) charts.push(buildChart(card.querySelector('canvas')!, payload.labels, s, s.id === 'readiness'));
+    });
+  }
+  renderAll();
+  // Recolorear al cambiar entre modo claro y oscuro.
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
+
+  const dlg = document.getElementById('zoom') as HTMLDialogElement;
+  let zoomChart: Chart | null = null;
+  document.querySelectorAll<HTMLButtonElement>('.chart-zoom').forEach((card) =>
+    card.addEventListener('click', () => {
+      const s = byId.get(card.dataset.id!);
+      if (!s) return;
+      document.getElementById('zoom-title')!.textContent = s.label;
+      dlg.showModal();
+      zoomChart?.destroy();
+      zoomChart = buildChart(document.getElementById('zoom-canvas') as HTMLCanvasElement, payload.labels, s, true);
+    }),
+  );
+  document.getElementById('zoom-close')!.addEventListener('click', () => dlg.close());
+  dlg.addEventListener('click', (e) => e.target === dlg && dlg.close());
+</script>
+
+<style>
+  .ranges {
+    display: flex;
+    gap: 2px;
+    padding: 4px;
+    border-radius: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .ranges a {
+    flex: 1 0 auto;
+    text-align: center;
+    padding: 8px 12px;
+    border-radius: 12px;
+    color: var(--muted);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.86rem;
+    transition: color 0.15s, background 0.15s;
+  }
+  .ranges a:hover {
+    color: var(--text);
+  }
+  .ranges a.active {
+    background: var(--text);
+    color: var(--bg);
+  }
+
+  .empty {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+  .empty p {
+    margin: 0;
+  }
+
+  .hero-chart {
+    padding: 20px 20px 14px;
+  }
+  .hero-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 14px 24px;
+    margin-bottom: 14px;
+  }
+  .big {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .big .num {
+    font-size: 2.8rem;
+    font-weight: 600;
+    line-height: 1.05;
+  }
+  .zones {
+    min-width: 220px;
+    flex: 0 1 320px;
+  }
+  .zone-bar {
+    display: flex;
+    gap: 2px;
+    height: 10px;
+    border-radius: 99px;
+    overflow: hidden;
+  }
+  .zone-bar span {
+    background: var(--zone);
+  }
+  .zone-legend {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    color: var(--muted);
+  }
+  .zone-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .zone-legend i {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--zone);
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    margin: 0;
+    color: var(--muted);
+  }
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .sw {
+    display: inline-block;
+    width: 18px;
+    height: 10px;
+    border-radius: 3px;
+  }
+  .sw.line {
+    height: 2px;
+    background: var(--chart-line);
+  }
+  .sw.avg {
+    height: 0;
+    border-top: 2px dashed var(--chart-avg);
+    border-radius: 0;
+  }
+  .sw.band {
+    background: var(--chart-band);
+    outline: 1px solid color-mix(in srgb, var(--chart-line) 25%, transparent);
+  }
+
+  .group-title {
+    margin-top: 10px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+    gap: 12px;
+  }
+  .chart-zoom {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font-weight: 400;
+    cursor: zoom-in;
+    color: inherit;
+  }
+  .hero-chart .chart-zoom {
+    padding: 0;
+    border: 0;
+    background: none;
+    min-height: 0;
+  }
+  .hero-chart .chart-zoom:hover {
+    background: none;
+  }
+  .chart-card {
+    padding: 16px 16px 12px;
+    background: var(--surface);
+  }
+  .chart-card:hover {
+    background: var(--surface);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-lg);
+  }
+  .chart-card:active {
+    transform: none;
+  }
+  .chart-head {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+  .icon-badge.sm {
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+    flex: none;
+  }
+  .titles {
+    flex: 1;
+    min-width: 0;
+  }
+  .titles .sub {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nums {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    white-space: nowrap;
+    gap: 2px;
+  }
+  .nums .value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+  }
+  .nums .u {
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .chart-head {
+    min-height: 58px;
+  }
+  .canvas-wrap {
+    position: relative;
+    height: 130px;
+  }
+  .canvas-wrap.tall {
+    height: 220px;
+  }
+  .foot {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .foot b {
+    color: var(--text);
+    font-size: 0.95rem;
+  }
+  dialog {
+    width: min(980px, calc(100vw - 24px));
+  }
+  .zoom-wrap {
+    position: relative;
+    height: min(62vh, 480px);
+    margin-top: 10px;
+  }
+</style>

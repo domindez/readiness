@@ -1,0 +1,134 @@
+---
+import type { Question } from '../lib/db';
+import { goodness } from '../lib/readiness';
+
+interface Props {
+  q: Question;
+  value: number | undefined;
+}
+const { q, value } = Astro.props;
+const name = `q-${q.id}`;
+---
+
+<fieldset class="likert" data-qid={q.id} data-inv={q.inverted}>
+  <legend>
+    <span class="label">{q.label}</span>
+    {q.description && <span class="desc">{q.description}</span>}
+  </legend>
+  <div class="seg" role="radiogroup">
+    {
+      [0, 1, 2, 3, 4].map((v) => {
+        // Color según lo bueno que sea (en las preguntas de cantidad, 0 = nada es lo mejor).
+        const title = v === 0 ? q.low_label : v === 4 ? q.high_label : undefined;
+        return (
+          <label class={`opt g${goodness(q, v)}`} title={title}>
+            <input type="radio" name={name} value={v} checked={value === v} />
+            <span class="num">{v}</span>
+          </label>
+        );
+      })
+    }
+  </div>
+  <div class="ends">
+    <span>{q.low_label}</span><span>{q.high_label}</span>
+  </div>
+</fieldset>
+
+<style>
+  .likert {
+    border: 0;
+    margin: 0;
+    padding: 16px 0;
+    border-top: 1px solid var(--border);
+    min-width: 0;
+  }
+  .likert:first-of-type {
+    border-top: 0;
+    padding-top: 2px;
+  }
+  legend {
+    float: left;
+    width: 100%;
+    padding: 0;
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .label {
+    font-weight: 650;
+    font-size: 0.97rem;
+  }
+  .desc {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .seg {
+    clear: both;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 4px;
+    padding: 4px;
+    border-radius: 16px;
+    background: var(--surface-2);
+  }
+  .opt {
+    position: relative;
+  }
+  .opt input {
+    position: absolute;
+    opacity: 0;
+    inset: 0;
+    margin: 0;
+    cursor: pointer;
+  }
+  .opt span {
+    display: grid;
+    place-items: center;
+    height: 46px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 1.15rem;
+    color: var(--muted);
+    transition: background 0.15s, color 0.15s, box-shadow 0.15s, transform 0.1s;
+  }
+  .opt:hover span {
+    color: var(--text);
+    background: var(--surface);
+  }
+  .opt input:active + span {
+    transform: scale(0.96);
+  }
+  .opt input:focus-visible + span {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .opt.g0 {
+    --c: var(--red);
+  }
+  .opt.g1 {
+    --c: color-mix(in srgb, var(--red) 55%, var(--amber));
+  }
+  .opt.g2 {
+    --c: var(--amber);
+  }
+  .opt.g3 {
+    --c: color-mix(in srgb, var(--green) 70%, var(--amber));
+  }
+  .opt.g4 {
+    --c: var(--green);
+  }
+  .opt input:checked + span {
+    background: var(--c);
+    color: #fff;
+    box-shadow: 0 4px 12px -4px var(--c);
+  }
+  .ends {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    padding: 0 6px;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+</style>

@@ -1,0 +1,331 @@
+---
+import Icon from './Icon.astro';
+import { addDays } from '../lib/dates';
+import { mondayOf, type WeekTotals } from '../lib/weekly';
+
+interface Props {
+  /** Semanas de la más antigua a la más reciente. */
+  weeks: WeekTotals[];
+  /** Día que se está viendo (su semana es "esta semana"). */
+  date: string;
+}
+const { weeks, date } = Astro.props;
+
+const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const dm = (d: string) => ({ day: Number(d.slice(8, 10)), mon: MONTHS[Number(d.slice(5, 7)) - 1] });
+const rangeLabel = (w: WeekTotals) => {
+  const a = dm(w.start);
+  const b = dm(w.end);
+  return a.mon === b.mon ? `${a.day}–${b.day} ${b.mon}` : `${a.day} ${a.mon} – ${b.day} ${b.mon}`;
+};
+const thisWeek = mondayOf(date);
+const lastWeek = addDays(thisWeek, -7);
+const titleOf = (w: WeekTotals) => (w.start === thisWeek ? 'Esta semana' : w.start === lastWeek ? 'Semana pasada' : rangeLabel(w));
+const runsTxt = (w: WeekTotals) => `${w.runs} ${w.runs === 1 ? 'carrera' : 'carreras'}`;
+const subOf = (w: WeekTotals) => (titleOf(w) === rangeLabel(w) ? runsTxt(w) : `${rangeLabel(w)} · ${runsTxt(w)}`);
+const fmtKm = (km: number) => km.toFixed(1).replace('.', ',');
+const fmtTime = (s: number) => {
+  const m = Math.round(s / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+};
+
+// Escala: techo "redondo" por encima del máximo (múltiplo de 10 km, o de 5 si es poco).
+const maxKm = Math.max(...weeks.map((w) => w.km));
+const step = maxKm <= 20 ? 5 : 10;
+const top = Math.max(step * 2, Math.ceil((maxKm * 1.08) / step) * step);
+const n = weeks.length;
+const xPct = (i: number) => ((i + 0.5) / n) * 100;
+const yPct = (km: number) => 100 - (km / top) * 100;
+// Trazo en un viewBox 0..100 que se estira (las líneas no escalan su grosor; los puntos son HTML).
+const pts = weeks.map((w, i) => `${xPct(i).toFixed(2)},${yPct(w.km).toFixed(2)}`);
+const line = `M${pts.join('L')}`;
+const area = `${line}L${xPct(n - 1).toFixed(2)},100L${xPct(0).toFixed(2)},100Z`;
+const grid = [top, top / 2, 0];
+// Etiqueta de mes en la semana que contiene el día 1.
+const monthLabels = weeks.flatMap((w, i) => {
+  const firstOfMonth = `${w.end.slice(0, 8)}01`;
+  return firstOfMonth >= w.start && firstOfMonth <= w.end && i > 0 ? [{ i, label: MONTHS[Number(w.end.slice(5, 7)) - 1] }] : [];
+});
+const sel = n - 1;
+const total = weeks.reduce((s, w) => s + w.km, 0);
+---
+
+<section class="card runs" aria-label="Kilómetros de carrera por semana" data-runs>
+  <div class="card-head">
+    <span class="icon-badge"><Icon name="trend" size={18} /></span>
+    <div class="titles">
+      <span class="eyebrow">Carrera · últimas 12 semanas</span>
+      <h2 data-title>{titleOf(weeks[sel])}</h2>
+      <span class="muted small" data-sub>
+        {subOf(weeks[sel])}
+      </span>
+    </div>
+  </div>
+
+  <div class="totals">
+    <div class="tot">
+      <span class="tot-label">Distancia</span>
+      <span class="tot-value"><span class="num" data-km>{fmtKm(weeks[sel].km)}</span><small>km</small></span>
+    </div>
+    <div class="tot">
+      <span class="tot-label">Tiempo</span>
+      <span class="tot-value"><span class="num" data-time>{fmtTime(weeks[sel].secs)}</span></span>
+    </div>
+    <div class="tot">
+      <span class="tot-label">Desnivel</span>
+      <span class="tot-value"><span class="num" data-elev>{Math.round(weeks[sel].elev)}</span><small>m</small></span>
+    </div>
+  </div>
+
+  <div class="chart">
+    <div class="plot">
+      {
+        grid.map((g) => (
+          <div class="gridline" style={`top:${yPct(g)}%`}>
+            <span class="glabel num">{g} km</span>
+          </div>
+        ))
+      }
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <path d={area} class="area" />
+        <path d={line} class="line" vector-effect="non-scaling-stroke" />
+      </svg>
+      <div class="cursor" data-cursor style={`left:${xPct(sel)}%`}></div>
+      {
+        weeks.map((w, i) => (
+          <span class:list={['pt', { on: i === sel }]} data-pt={i} style={`left:${xPct(i)}%;top:${yPct(w.km)}%`} />
+        ))
+      }
+      <div class="hits" role="group" aria-label="Elegir semana">
+        {
+          weeks.map((w, i) => (
+            <button
+              type="button"
+              class="hit"
+              aria-pressed={i === sel ? 'true' : 'false'}
+              aria-label={`${rangeLabel(w)}: ${fmtKm(w.km)} km`}
+              data-i={i}
+              data-title={titleOf(w)}
+              data-sub={subOf(w)}
+              data-km={fmtKm(w.km)}
+              data-time={fmtTime(w.secs)}
+              data-elev={Math.round(w.elev)}
+            />
+          ))
+        }
+      </div>
+    </div>
+    <div class="months">
+      {
+        monthLabels.map((m) => (
+          <span style={`left:${xPct(m.i)}%`}>{m.label}</span>
+        ))
+      }
+    </div>
+  </div>
+
+  <table class="sr-only">
+    <caption>Kilómetros de carrera por semana ({fmtKm(total)} km en total)</caption>
+    <thead><tr><th>Semana</th><th>Distancia</th><th>Tiempo</th><th>Desnivel</th></tr></thead>
+    <tbody>
+      {
+        weeks.map((w) => (
+          <tr>
+            <td>{rangeLabel(w)}</td>
+            <td>{fmtKm(w.km)} km</td>
+            <td>{fmtTime(w.secs)}</td>
+            <td>{Math.round(w.elev)} m</td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+</section>
+
+<script>
+  for (const root of document.querySelectorAll<HTMLElement>('[data-runs]')) {
+    const hits = [...root.querySelectorAll<HTMLButtonElement>('.hit')];
+    const pts = [...root.querySelectorAll<HTMLElement>('.pt')];
+    const cursor = root.querySelector<HTMLElement>('[data-cursor]')!;
+    const set = (key: string, v: string) => (root.querySelector<HTMLElement>(`[data-${key}]:not(button)`)!.textContent = v);
+    const select = (i: number) => {
+      const b = hits[i];
+      for (const k of ['title', 'sub', 'km', 'time', 'elev']) set(k, b.dataset[k]!);
+      hits.forEach((h, j) => h.setAttribute('aria-pressed', String(j === i)));
+      pts.forEach((p, j) => p.classList.toggle('on', j === i));
+      cursor.style.left = pts[i].style.left;
+    };
+    hits.forEach((h, i) => {
+      h.addEventListener('click', () => select(i));
+      // Al arrastrar el dedo por la gráfica también va cambiando de semana, como en Strava.
+      h.addEventListener('pointerenter', (e) => e.pointerType !== 'touch' && select(i));
+    });
+    const plot = root.querySelector<HTMLElement>('.plot')!;
+    plot.addEventListener(
+      'touchmove',
+      (e) => {
+        const t = e.touches[0];
+        const r = plot.getBoundingClientRect();
+        const i = Math.floor(((t.clientX - r.left) / r.width) * hits.length);
+        if (i >= 0 && i < hits.length) select(i);
+      },
+      { passive: true },
+    );
+  }
+</script>
+
+<style>
+  .card-head {
+    margin-bottom: 12px;
+    align-items: flex-start;
+  }
+  .titles {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .totals {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .tot {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: var(--surface-2);
+    min-width: 0;
+  }
+  .tot-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .tot-value {
+    white-space: nowrap;
+  }
+  .tot-value .num {
+    font-size: 1.3rem;
+    font-weight: 600;
+    line-height: 1.15;
+  }
+  .tot-value small {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-left: 3px;
+  }
+
+  .chart {
+    /* Hueco a la derecha para las etiquetas del eje. */
+    padding-right: 44px;
+  }
+  .plot {
+    position: relative;
+    height: 140px;
+    touch-action: pan-y;
+  }
+  .plot svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .area {
+    fill: var(--chart-fill);
+  }
+  .line {
+    fill: none;
+    stroke: var(--chart-line);
+    stroke-width: 2px;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+  .gridline {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 1px solid var(--chart-grid);
+  }
+  .gridline:last-of-type {
+    border-top-color: var(--border-strong);
+  }
+  .glabel {
+    position: absolute;
+    left: 100%;
+    margin-left: 8px;
+    transform: translateY(-50%);
+    font-size: 0.68rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .cursor {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-left: 1px dashed var(--border-strong);
+    pointer-events: none;
+  }
+  .pt {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    margin: -4px 0 0 -4px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 2px solid var(--chart-line);
+    box-sizing: border-box;
+    pointer-events: none;
+    transition: transform 0.15s;
+  }
+  .pt.on {
+    background: var(--chart-line);
+    box-shadow: 0 0 0 2px var(--surface);
+    transform: scale(1.5);
+  }
+  .hits {
+    position: absolute;
+    inset: 0;
+    display: flex;
+  }
+  .hit,
+  .hit:hover,
+  .hit:active {
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    transform: none;
+    box-shadow: none;
+  }
+  .hit:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .months {
+    position: relative;
+    height: 18px;
+    margin-top: 6px;
+  }
+  .months span {
+    position: absolute;
+    transform: translateX(-50%);
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+</style>

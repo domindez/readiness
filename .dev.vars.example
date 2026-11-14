@@ -1,0 +1,3 @@
+# Copia este archivo a .dev.vars para desarrollo local.
+# Clave de intervals.icu: Settings -> Developer Settings -> API Key
+INTERVALS_API_KEY=

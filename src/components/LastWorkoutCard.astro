@@ -1,0 +1,262 @@
+---
+import Icon from './Icon.astro';
+import type { IconName } from '../lib/icons';
+import { addDays, formatShort } from '../lib/dates';
+import type { WorkoutSummary } from '../lib/workout';
+
+interface Props {
+  /** Últimos entrenamientos, del más reciente al más antiguo (uno por diapositiva). */
+  list: WorkoutSummary[];
+  /** Última carrera, si el último entrenamiento no lo fue. */
+  run?: WorkoutSummary | null;
+  /** Día que se está viendo (para decir "hoy"/"ayer"). */
+  date: string;
+  error?: boolean;
+}
+const { list, run, date, error } = Astro.props;
+
+const TYPE_LABELS: Record<string, string> = {
+  Run: 'Carrera',
+  TrailRun: 'Trail',
+  VirtualRun: 'Cinta / virtual',
+  WeightTraining: 'Fuerza',
+  Ride: 'Ciclismo',
+  VirtualRide: 'Rodillo',
+  Walk: 'Caminata',
+  Hike: 'Senderismo',
+  Swim: 'Natación',
+  Yoga: 'Yoga',
+  Workout: 'Entrenamiento',
+};
+const iconOf = (x: WorkoutSummary): IconName => (x.kind === 'run' ? 'trend' : x.kind === 'strength' ? 'bolt' : 'pulse');
+const whenOf = (x: WorkoutSummary) =>
+  x.date === date
+    ? 'Hoy'
+    : x.date === addDays(date, -1)
+      ? 'Ayer'
+      : new Date(`${x.date}T00:00:00Z`).toLocaleDateString('es-ES', { weekday: 'long', timeZone: 'UTC' }) + ' ' + formatShort(x.date);
+// Una diapositiva por entrenamiento. En la primera, si lo último no fue una carrera, se muestra también la última carrera.
+const slides = list.map((x, i) =>
+  i === 0
+    ? [{ title: 'Último entrenamiento', x }, ...(run ? [{ title: 'Última carrera', x: run }] : [])]
+    : [{ title: i === 1 ? 'Entrenamiento anterior' : `Hace ${i} entrenamientos`, x }],
+);
+---
+
+{
+  slides.length === 0 && (
+    <section class="card workout" aria-label="Último entrenamiento">
+      <div class="card-head">
+        <span class="icon-badge"><Icon name="trend" size={18} /></span>
+        <div class="titles">
+          <span class="eyebrow">Último entrenamiento</span>
+          <h2>{error ? 'No disponible' : 'Sin entrenamientos recientes'}</h2>
+          <span class="muted small">
+            {error ? 'No se pudieron leer las actividades de intervals.icu.' : 'No hay actividades en intervals.icu en los últimos 60 días.'}
+          </span>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+{
+  slides.length > 0 && (
+    <div class="workouts" data-workouts>
+      <div class="track" aria-label="Últimos entrenamientos" aria-roledescription="carrusel">
+        {slides.map((blocks, si) => (
+          <section class="card workout slide" aria-label={`Entrenamiento ${si + 1} de ${slides.length}`}>
+            {blocks.map(({ title, x }) => (
+      <div class="block">
+        <div class="card-head">
+          <span class="icon-badge">
+            <Icon name={iconOf(x)} size={18} />
+          </span>
+          <div class="titles">
+            <span class="eyebrow">{title}</span>
+            <h2>{x.name}</h2>
+            <span class="muted small">
+              {TYPE_LABELS[x.type] ?? x.type} · {whenOf(x)}
+              {x.time && ` · ${x.time}`}
+            </span>
+          </div>
+        </div>
+        <div class="grid">
+          {x.stats.map((s) => (
+            <div class:list={['st', { wide: !!s.sub && s.label === 'Eficiencia' }]}>
+              <span class="st-label">{s.label}</span>
+              <span class="st-value">
+                <span class="num">{s.value}</span>
+                {s.unit && <small>{s.unit}</small>}
+              </span>
+              {s.sub && <span class:list={['st-sub', s.tone]}>{s.sub}</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+            ))}
+          </section>
+        ))}
+      </div>
+      {slides.length > 1 && (
+        <div class="dots" role="tablist" aria-label="Elegir entrenamiento">
+          {slides.map((_, i) => (
+            <button type="button" class:list={['dot', { on: i === 0 }]} aria-label={`Entrenamiento ${i + 1}`} data-i={i} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+<script>
+  for (const root of document.querySelectorAll<HTMLElement>('[data-workouts]')) {
+    const track = root.querySelector<HTMLElement>('.track')!;
+    const dots = [...root.querySelectorAll<HTMLButtonElement>('.dot')];
+    if (!dots.length) continue;
+    const slideW = () => (track.firstElementChild as HTMLElement).offsetWidth + parseFloat(getComputedStyle(track).columnGap || '0');
+    let raf = 0;
+    track.addEventListener(
+      'scroll',
+      () => {
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          const i = Math.round(track.scrollLeft / slideW());
+          dots.forEach((d, j) => d.classList.toggle('on', j === i));
+        });
+      },
+      { passive: true },
+    );
+    dots.forEach((d, i) => d.addEventListener('click', () => track.scrollTo({ left: i * slideW(), behavior: 'smooth' })));
+  }
+</script>
+
+<style>
+  .track {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    /* Deja sitio a la sombra de las tarjetas para que no se recorte. */
+    margin: -8px;
+    padding: 8px;
+    scroll-padding: 8px;
+  }
+  .track::-webkit-scrollbar {
+    display: none;
+  }
+  .slide {
+    flex: 0 0 100%;
+    min-width: 0;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+  }
+  .dots {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .dot,
+  .dot:hover,
+  .dot:active {
+    width: 7px;
+    height: 7px;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    transform: none;
+    box-shadow: none;
+    border-radius: 99px;
+    background: var(--border);
+    cursor: pointer;
+    transition: width 0.2s, background 0.2s;
+  }
+  .dot.on,
+  .dot.on:hover {
+    width: 18px;
+    background: var(--muted);
+  }
+  .card-head {
+    margin-bottom: 12px;
+    align-items: flex-start;
+  }
+  .titles {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .titles h2 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .titles .small:first-letter {
+    text-transform: uppercase;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 8px;
+  }
+  .st {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: var(--surface-2);
+    min-width: 0;
+  }
+  .st.wide {
+    grid-column: span 2;
+  }
+  .st-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .st-value {
+    white-space: nowrap;
+  }
+  .st-value .num {
+    font-size: 1.3rem;
+    font-weight: 600;
+    line-height: 1.15;
+  }
+  .st-value small {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-left: 3px;
+  }
+  .st-sub {
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+  .st-sub.good {
+    color: var(--green);
+  }
+  .st-sub.bad {
+    color: var(--red);
+  }
+  .block + .block {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .raw {
+    margin-top: 10px;
+  }
+  .raw summary {
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .raw p {
+    word-break: break-word;
+  }
+</style>

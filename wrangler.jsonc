@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "readiness",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "@astrojs/cloudflare/entrypoints/server",
+  "assets": { "binding": "ASSETS", "directory": "./dist" },
+  // Las URLs de preview (versiones) quedarían fuera de Cloudflare Access.
+  "preview_urls": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "readiness",
+      // Creada con `npx wrangler d1 create readiness`.
+      "database_id": "d874455f-8f86-41bc-8003-7a7e7dae5bfe",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    // Zona horaria para decidir qué día es "hoy".
+    "TZ_NAME": "Europe/Madrid",
+    // ID de atleta de intervals.icu (p. ej. "i123456"). "0" = el dueño de la API key.
+    "INTERVALS_ATHLETE_ID": "i371598",
+    // Cloudflare Access (verificación del JWT en el servidor). Déjalos vacíos en local.
+    // ACCESS_TEAM_DOMAIN: "tuequipo.cloudflareaccess.com", ACCESS_AUD: el "Application Audience (AUD) Tag".
+    "ACCESS_TEAM_DOMAIN": "danidomin19.cloudflareaccess.com",
+    "ACCESS_AUD": "2e63535839a5fb6b825483b870c332c199b68893bb8440d48793d50c39bac598"
+  },
+  "observability": { "enabled": true }
+}

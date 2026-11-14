@@ -1,0 +1,56 @@
+/** Iconos de trazo (24×24, stroke currentColor). */
+export const ICONS = {
+  sun: 'M12 3v1.5M12 19.5V21M4.6 4.6l1.1 1.1M18.3 18.3l1.1 1.1M3 12h1.5M19.5 12H21M4.6 19.4l1.1-1.1M18.3 5.7l1.1-1.1M12 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z',
+  trend: 'M3 17l5.5-5.5 4 4L21 7M15 7h6v6',
+  list: 'M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01',
+  settings:
+    'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
+  heart: 'M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z',
+  pulse: 'M3 12h4l2.5-6 4 12 2.5-6H21',
+  moon: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z',
+  clock: 'M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z',
+  brain: 'M12 5a3 3 0 0 0-5.8-1A3 3 0 0 0 4 9a3 3 0 0 0 0 6 3 3 0 0 0 3 4 3 3 0 0 0 5-1V5zM12 5a3 3 0 0 1 5.8-1A3 3 0 0 1 20 9a3 3 0 0 1 0 6 3 3 0 0 1-3 4 3 3 0 0 1-5-1',
+  battery: 'M3 8a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8zM21 10v4M7 10v4M10 10v4',
+  wind: 'M3 8h10a3 3 0 1 0-3-3M3 16h13a3 3 0 1 1-3 3M3 12h17',
+  drop: 'M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z',
+  thermo: 'M14 14.8V5a2 2 0 1 0-4 0v9.8a4 4 0 1 0 4 0z',
+  bolt: 'M13 2 4 14h7l-1 8 9-12h-7l1-8z',
+  gauge: 'M12 14l4-4M4.9 19a9 9 0 1 1 14.2 0',
+  smile: 'M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z',
+  alert: 'M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
+  check: 'M20 6 9 17l-5-5',
+  calendar: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
+  chevronL: 'M15 18l-6-6 6-6',
+  chevronR: 'M9 18l6-6-6-6',
+  chevronD: 'M6 9l6 6 6-6',
+  refresh: 'M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5',
+  note: 'M4 20h16M4 4h10l6 6v6M14 4v6h6',
+  download: 'M12 3v12M7 10l5 5 5-5M5 21h14',
+  plus: 'M12 5v14M5 12h14',
+  link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
+  info: 'M12 16v-4M12 8h.01M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z',
+  trash: 'M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14',
+  up: 'M12 19V5M5 12l7-7 7 7',
+  down: 'M12 5v14M19 12l-7 7-7-7',
+  x: 'M18 6 6 18M6 6l12 12',
+} as const;
+
+export type IconName = keyof typeof ICONS;
+
+/** Icono por métrica / grupo. */
+export const METRIC_ICONS: Record<string, IconName> = {
+  hrv: 'pulse',
+  resting_hr: 'heart',
+  sleep_score: 'moon',
+  sleep_hours: 'clock',
+  stress_avg: 'brain',
+  body_battery: 'battery',
+  respiration: 'wind',
+  spo2: 'drop',
+  skin_temp_delta: 'thermo',
+  ctl: 'trend',
+  atl: 'bolt',
+  form: 'gauge',
+  readiness: 'sun',
+  subjective: 'smile',
+};

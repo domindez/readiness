@@ -1,0 +1,207 @@
+---
+import { env } from 'cloudflare:workers';
+import Base from '../layouts/Base.astro';
+import Icon from '../components/Icon.astro';
+import type { MetricDef } from '../lib/metrics';
+import { getAllData } from '../lib/db';
+import { formatShort, todayIn } from '../lib/dates';
+import { METRICS } from '../lib/metrics';
+import { analyze, pctToAnswer } from '../lib/readiness';
+
+const today = todayIn(env.TZ_NAME || 'Europe/Madrid');
+const data = await getAllData();
+const a = analyze(data, today);
+const entryByDate = new Map(data.entries.map((e) => [e.date, e]));
+const answered = new Set(data.answers.map((x) => x.date));
+const shown = METRICS.filter((m) => data.entries.some((e) => e[m.key] !== null));
+const PAGE = 60;
+const page = Math.max(1, Number(Astro.url.searchParams.get('p')) || 1);
+
+const rows = a.days
+  .map((d, i) => ({ date: d, i }))
+  .filter(({ date }) => entryByDate.has(date) || answered.has(date))
+  .reverse();
+const pageRows = rows.slice((page - 1) * PAGE, page * PAGE);
+const pages = Math.ceil(rows.length / PAGE);
+/** Tono de la celda según la desviación respecto a la línea base. */
+function tone(m: MetricDef, z: number | undefined): string {
+  if (z === undefined || m.direction === 'none') return '';
+  const s = m.direction === 'higher' ? z : m.direction === 'lower' ? -z : -Math.abs(z);
+  return s <= -1.5 ? 'bad' : s <= -0.75 ? 'meh' : s >= 0.75 && m.direction !== 'deviation' ? 'good' : '';
+}
+const weekday =(d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('es-ES', { weekday: 'short', timeZone: 'UTC' });
+---
+
+<Base title="Historial">
+  <div class="stack">
+    <header class="row">
+      <div>
+        <span class="eyebrow">{rows.length} días registrados</span>
+        <h1>Historial</h1>
+      </div>
+      <div class="spacer"></div>
+      <span class="legend small muted"><i class="good"></i>mejor <i class="meh"></i>peor <i class="bad"></i>muy fuera de lo normal</span>
+    </header>
+
+    {
+      rows.length === 0 ? (
+        <div class="card">
+          <p>Aún no hay registros.</p>
+        </div>
+      ) : (
+        <div class="card">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Ready</th>
+                  <th>Sens.</th>
+                  {shown.map((m) => <th title={m.label}>{m.label}</th>)}
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map(({ date, i }) => {
+                  const s = a.scores[i];
+                  const e = entryByDate.get(date);
+                  return (
+                    <tr>
+                      <td>
+                        <a href={`/?date=${date}`}>
+                          <span class="muted">{weekday(date)}</span> {formatShort(date)}
+                        </a>
+                        {e?.notes && <span class="note-dot" title={e.notes}>●</span>}
+                      </td>
+                      <td>
+                        <span class={`score zone-${s.zone}`}>{s.score ?? '–'}</span>
+                      </td>
+                      <td title="Media de sensaciones (0-4)">{pctToAnswer(s.subjective)?.toFixed(1).replace('.', ',') ?? '–'}</td>
+                      {shown.map((m) => <td class={tone(m, s.z[m.key])}>{e?.[m.key] ?? ''}</td>)}
+                      <td>
+                        <button type="button" class="ghost danger del" data-date={date} aria-label={`Borrar ${date}`}>
+                          <Icon name="trash" size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {pages > 1 && (
+            <nav class="row pager">
+              {page > 1 && <a class="btn" href={`/historial?p=${page - 1}`}>‹ Más recientes</a>}
+              <span class="spacer" />
+              <span class="muted small">
+                Página {page} de {pages}
+              </span>
+              <span class="spacer" />
+              {page < pages && <a class="btn" href={`/historial?p=${page + 1}`}>Más antiguos ›</a>}
+            </nav>
+          )}
+        </div>
+      )
+    }
+  </div>
+</Base>
+
+<script>
+  import { api, reloadWithToast, toast } from '../lib/client';
+
+  document.querySelectorAll<HTMLButtonElement>('button.del').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const d = b.dataset.date!;
+      if (!confirm(`¿Borrar todo el registro del ${d}? No se puede deshacer.`)) return;
+      try {
+        await api(`/api/entries?date=${d}`, 'DELETE');
+        reloadWithToast('Registro borrado');
+      } catch (e) {
+        toast((e as Error).message, true);
+      }
+    }),
+  );
+</script>
+
+<style>
+  .score {
+    display: inline-block;
+    min-width: 38px;
+    text-align: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 0.95rem;
+    background: var(--zone-soft);
+    color: var(--zone);
+  }
+  td.good {
+    color: var(--green);
+    font-weight: 600;
+  }
+  td.meh {
+    color: var(--amber);
+    font-weight: 600;
+  }
+  td.bad {
+    color: var(--red);
+    font-weight: 700;
+    background: var(--red-soft);
+  }
+  tbody tr:hover td.bad {
+    background: var(--red-soft);
+  }
+  td:first-child,
+  th:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--surface);
+    z-index: 1;
+  }
+  .note-dot {
+    color: var(--accent);
+    font-size: 0.55rem;
+    margin-left: 5px;
+    vertical-align: middle;
+  }
+  td a {
+    text-decoration: none;
+    font-weight: 600;
+    color: var(--text);
+  }
+  td a:hover {
+    color: var(--accent);
+  }
+  button.del {
+    min-height: 32px;
+    padding: 4px 8px;
+    color: var(--muted);
+  }
+  button.del:hover {
+    color: var(--red);
+  }
+  .legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .legend i {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    margin-left: 6px;
+  }
+  .legend i.good {
+    background: var(--green);
+  }
+  .legend i.meh {
+    background: var(--amber);
+  }
+  .legend i.bad {
+    background: var(--red);
+  }
+  .pager {
+    margin-top: 14px;
+  }
+</style>

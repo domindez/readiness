@@ -1,0 +1,354 @@
+---
+import { env } from 'cloudflare:workers';
+import Base from '../layouts/Base.astro';
+import Icon from '../components/Icon.astro';
+import { getQuestions } from '../lib/db';
+import { intervalsConfigured } from '../lib/intervals';
+import { METRICS } from '../lib/metrics';
+import { SCORE_CONFIG } from '../lib/readiness';
+
+const questions = await getQuestions(true);
+const connected = intervalsConfigured();
+const athlete = env.INTERVALS_ATHLETE_ID || '0';
+const imported = METRICS.filter((m) => m.intervals).map((m) => m.label);
+const manual = METRICS.filter((m) => !m.intervals).map((m) => m.label);
+---
+
+<Base title="Ajustes">
+  <div class="stack">
+    <header>
+      <span class="eyebrow">Configuración</span>
+      <h1>Ajustes</h1>
+    </header>
+
+    <section class="card stack">
+      <div class="card-head">
+        <span class="icon-badge"><Icon name="smile" size={18} /></span>
+        <h2>Preguntas</h2>
+        <div class="spacer"></div>
+        <button type="button" class="primary" id="add-q"><Icon name="plus" size={17} stroke={2.4} /> Añadir</button>
+      </div>
+      <p class="muted small" style="margin-top:4px">
+        Cada pregunta se puntúa de 0 a 4. En las preguntas de calidad 4 es lo mejor; en las de cantidad (dolor, despertares, estrés) el número indica cuánto y 0 = nada es lo mejor: para la media se invierten, así que la media siempre va de 0 (mal) a 4 (bien). Desactivar una pregunta
+        la oculta del formulario pero conserva su histórico; borrarla elimina también sus respuestas.
+      </p>
+      <ul class="qlist">
+        {
+          questions.map((q, i) => (
+            <li class:list={['q', { inactive: !q.active }]} data-q={JSON.stringify(q)}>
+              <div class="q-main">
+                <strong>{q.label}</strong>
+                {!q.active && <span class="badge">inactiva</span>}
+                {q.inverted === 1 && <span class="badge">cantidad · 0 es lo mejor</span>}
+                <div class="muted small">
+                  0 = {q.low_label} · 4 = {q.high_label}
+                </div>
+              </div>
+              <div class="q-actions">
+                <button type="button" class="ghost move" data-dir="up" disabled={i === 0} aria-label="Subir"><Icon name="up" size={16} /></button>
+                <button type="button" class="ghost move" data-dir="down" disabled={i === questions.length - 1} aria-label="Bajar"><Icon name="down" size={16} /></button>
+                <button type="button" class="edit">Editar</button>
+              </div>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
+    <section class="card stack">
+      <div class="card-head">
+        <span class="icon-badge"><Icon name="link" size={18} /></span>
+        <h2>intervals.icu</h2>
+      </div>
+      {
+        connected ? (
+          <p class="status ok"><Icon name="check" size={16} stroke={2.4} /> Conectado · atleta <code>{athlete}</code></p>
+        ) : (
+          <div class="small">
+            <p class="status warn"><Icon name="info" size={16} stroke={2.2} /> Sin configurar</p>
+            <ol>
+              <li>En intervals.icu: Settings → Developer Settings → copia tu <b>API Key</b> y tu <b>Athlete ID</b>.</li>
+              <li>
+                Local: crea <code>.dev.vars</code> con <code>INTERVALS_API_KEY=…</code>. Producción: <code>npx wrangler secret put INTERVALS_API_KEY</code>.
+              </li>
+              <li>
+                Pon tu ID en <code>INTERVALS_ATHLETE_ID</code> (en <code>wrangler.jsonc</code>).
+              </li>
+            </ol>
+          </div>
+        )
+      }
+      <p class="muted small">
+        Se importan: {imported.join(', ')}. A mano: {manual.join(', ')} (Garmin no las envía a intervals). Al abrir el check-in de hoy los datos se
+        precargan solos. El estrés medio se toma del día anterior (el de hoy aún no está completo por la mañana) y solo llega si intervals.icu lo
+        recibe de Garmin: compruébalo en «Campos recibidos» tras importar.
+      </p>
+      {
+        connected && (
+          <form id="sync" class="row sync">
+            <label>
+              <span class="field-label">Importar histórico (días)</span>
+              <input type="number" name="days" value="180" min="1" max="1500" />
+            </label>
+            <label class="check">
+              <input type="checkbox" name="overwrite" /> Sobrescribir valores existentes
+            </label>
+            <button type="submit" class="primary">Importar</button>
+          </form>
+        )
+      }
+      <p id="sync-result" class="small muted" hidden></p>
+    </section>
+
+    <section class="card stack">
+      <div class="card-head">
+        <span class="icon-badge"><Icon name="download" size={18} /></span>
+        <h2>Exportar</h2>
+      </div>
+      <p class="muted small">Copia de seguridad o análisis en Excel / Sheets.</p>
+      <div class="row">
+        <a class="btn" href="/api/export?format=csv"><Icon name="download" size={16} /> CSV</a>
+        <a class="btn" href="/api/export?format=json"><Icon name="download" size={16} /> JSON</a>
+      </div>
+    </section>
+
+    <section class="card stack small">
+      <div class="card-head">
+        <span class="icon-badge"><Icon name="info" size={18} /></span>
+        <h2>Cómo se calcula el readiness</h2>
+      </div>
+      <p>
+        Cada métrica del reloj se compara con <b>tu línea base de los 60 días anteriores</b> (media y desviación típica, mínimo 7 días). Estar en tu
+        media vale {SCORE_CONFIG.objectiveCenter} y cada desviación típica suma o resta {SCORE_CONFIG.pointsPerSd} puntos. Pesos: HRV 30 %, FC en reposo
+        25 %, puntuación de sueño 15 %, y horas de sueño, estrés y Body Battery 10 % cada una.
+      </p>
+      <p>
+        Las respuestas (0-4) se pasan a 0-100 (100 = mejor). Readiness = {SCORE_CONFIG.objectiveWeight * 100} % reloj + {SCORE_CONFIG.subjectiveWeight * 100} %
+        sensaciones. Verde ≥ {SCORE_CONFIG.green}, ámbar ≥ {SCORE_CONFIG.amber}, rojo por debajo. Se avisa cuando una métrica se sale ±1,5-2 DE de lo
+        normal. Respiración, SpO₂ y temperatura solo generan avisos y no puntúan.
+      </p>
+    </section>
+  </div>
+
+  <dialog id="qdlg">
+    <form id="qform" class="stack" method="dialog">
+      <h2 id="qdlg-title">Pregunta</h2>
+      <label><span class="field-label">Pregunta</span><input name="label" required maxlength="80" /></label>
+      <label><span class="field-label">Descripción (opcional)</span><input name="description" maxlength="200" /></label>
+      <div class="row two">
+        <label><span class="field-label">Qué significa 0</span><input name="low_label" maxlength="40" placeholder="Muy mal" /></label>
+        <label><span class="field-label">Qué significa 4</span><input name="high_label" maxlength="40" placeholder="Muy bien" /></label>
+      </div>
+      <label class="check"><input type="checkbox" name="inverted" /> Pregunta de cantidad: 0 = nada es lo mejor (dolor, despertares, estrés)</label>
+      <label class="check"><input type="checkbox" name="active" checked /> Activa</label>
+      <div class="row">
+        <button type="button" class="danger ghost" id="qdel">Borrar</button>
+        <div class="spacer"></div>
+        <button type="button" id="qcancel">Cancelar</button>
+        <button type="submit" class="primary">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+</Base>
+
+<script>
+  import { api, reloadWithToast, toast } from '../lib/client';
+
+  type Q = { id: number; label: string; description: string | null; low_label: string; high_label: string; inverted: number; active: number };
+  const dlg = document.getElementById('qdlg') as HTMLDialogElement;
+  const form = document.getElementById('qform') as HTMLFormElement;
+  const field = (n: string) => form.elements.namedItem(n) as HTMLInputElement;
+  let editing: Q | null = null;
+
+  function open(q: Q | null) {
+    editing = q;
+    document.getElementById('qdlg-title')!.textContent = q ? 'Editar pregunta' : 'Nueva pregunta';
+    field('label').value = q?.label ?? '';
+    field('description').value = q?.description ?? '';
+    field('low_label').value = q?.low_label ?? 'Muy mal';
+    field('high_label').value = q?.high_label ?? 'Muy bien';
+    field('inverted').checked = !!q?.inverted;
+    field('active').checked = q ? !!q.active : true;
+    (document.getElementById('qdel') as HTMLButtonElement).hidden = !q;
+    dlg.showModal();
+  }
+
+  document.getElementById('add-q')!.addEventListener('click', () => open(null));
+  document.getElementById('qcancel')!.addEventListener('click', () => dlg.close());
+  document.querySelectorAll<HTMLLIElement>('li.q').forEach((li) => {
+    const q = JSON.parse(li.dataset.q!) as Q;
+    li.querySelector('.edit')!.addEventListener('click', () => open(q));
+    li.querySelectorAll<HTMLButtonElement>('.move').forEach((b) =>
+      b.addEventListener('click', async () => {
+        try {
+          await api('/api/questions', 'PUT', { id: q.id, move: b.dataset.dir });
+          location.reload();
+        } catch (e) {
+          toast((e as Error).message, true);
+        }
+      }),
+    );
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = {
+      id: editing?.id,
+      label: field('label').value,
+      description: field('description').value,
+      low_label: field('low_label').value,
+      high_label: field('high_label').value,
+      inverted: field('inverted').checked,
+      active: field('active').checked,
+    };
+    try {
+      await api('/api/questions', editing ? 'PUT' : 'POST', body);
+      reloadWithToast('Pregunta guardada');
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  });
+
+  document.getElementById('qdel')!.addEventListener('click', async () => {
+    if (!editing) return;
+    if (!confirm(`¿Borrar «${editing.label}» y TODAS sus respuestas? Si solo quieres ocultarla, desactívala.`)) return;
+    try {
+      await api(`/api/questions?id=${editing.id}`, 'DELETE');
+      reloadWithToast('Pregunta borrada');
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  });
+
+  const sync = document.getElementById('sync') as HTMLFormElement | null;
+  sync?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = sync.querySelector('button')!;
+    const out = document.getElementById('sync-result')!;
+    btn.disabled = true;
+    btn.textContent = 'Importando…';
+    try {
+      const r = await api<{ oldest: string; newest: string; received: number; imported: number; fieldsSeen: string[] }>('/api/intervals/sync', 'POST', {
+        days: Number((sync.elements.namedItem('days') as HTMLInputElement).value),
+        overwrite: (sync.elements.namedItem('overwrite') as HTMLInputElement).checked,
+      });
+      out.hidden = false;
+      out.textContent = `${r.imported} días importados (${r.oldest} → ${r.newest}). Campos recibidos de intervals: ${r.fieldsSeen.join(', ') || 'ninguno'}.`;
+      toast('Importación completada');
+    } catch (err) {
+      toast((err as Error).message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Importar';
+    }
+  });
+</script>
+
+<style>
+  .qlist {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .q {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 12px 14px;
+    margin-top: 8px;
+    border-radius: 16px;
+    background: var(--surface-2);
+  }
+  .q.inactive .q-main {
+    opacity: 0.55;
+  }
+  .q-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .q-actions {
+    display: flex;
+    gap: 4px;
+  }
+  .q-actions .move {
+    min-width: 36px;
+    padding: 6px;
+    justify-content: center;
+  }
+  .badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
+    margin-left: 6px;
+    vertical-align: 2px;
+  }
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+  .status.ok {
+    color: var(--green);
+    background: var(--green-soft);
+  }
+  .status.warn {
+    color: var(--amber);
+    background: var(--amber-soft);
+  }
+  .card-head {
+    margin-bottom: 0;
+  }
+  .q-main strong {
+    font-weight: 650;
+  }
+  ol {
+    padding-left: 18px;
+    margin: 6px 0 0;
+  }
+  code {
+    font-size: 0.85em;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 5px;
+  }
+  .sync {
+    align-items: flex-end;
+  }
+  .sync label:first-child {
+    width: 170px;
+  }
+  .check {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    min-height: 42px;
+  }
+  .check input {
+    width: auto;
+    min-height: 0;
+  }
+  dialog {
+    width: min(520px, calc(100vw - 24px));
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    padding: 18px;
+  }
+  dialog::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+  }
+  .two > label {
+    flex: 1;
+    min-width: 140px;
+  }
+</style>
