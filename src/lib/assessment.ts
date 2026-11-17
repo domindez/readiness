@@ -189,3 +189,62 @@ export function assess({ score, values, mean7, subjAvg }: AssessInput): Assessme
 
   return { level, ...LEVELS[level], reasons };
 }
+
+export interface LoadAssessment {
+  tone: Tone;
+  title: string;
+  text: string;
+  points: string[];
+}
+
+/** Valoración de la carga de entrenamiento a partir de CTL (fitness), ATL (fatiga), TSB (forma) y la carga de ayer. */
+export function assessLoad(v: Values): LoadAssessment | null {
+  const { ctl, atl, form, load_prev: prev } = v;
+  if (ctl == null && atl == null && form == null) return null;
+  const f = form ?? (ctl != null && atl != null ? ctl - atl : null);
+  const points: string[] = [];
+  const ratio = ctl != null && atl != null && ctl > 5 ? atl / ctl : null;
+  if (ctl != null) points.push(`Fitness (CTL) ${fmt(ctl)}: tu carga diaria media de las últimas semanas.`);
+  if (ratio !== null) {
+    points.push(
+      `Fatiga/fitness ${fmt(ratio, 2)}: ${
+        ratio > 1.5 ? 'subida de carga muy brusca, riesgo de sobrecarga' : ratio > 1.3 ? 'carga reciente alta frente a tu base' : ratio >= 0.8 ? 'carga reciente en línea con tu base' : 'carga reciente baja frente a tu base'
+      }.`,
+    );
+  }
+  if (prev != null) points.push(prev === 0 ? 'Ayer descansaste.' : `Carga de ayer: ${Math.round(prev)}.`);
+
+  let tone: Tone;
+  let title: string;
+  let text: string;
+  if (f === null) {
+    tone = 'neutral';
+    title = 'Carga registrada';
+    text = 'Faltan datos para valorar tu forma.';
+  } else if (f <= -30 || (ratio !== null && ratio > 1.5)) {
+    tone = 'bad';
+    title = 'Sobrecarga';
+    text = `Forma ${signed(f, 1)}: fatiga acumulada muy alta. Baja el volumen o la intensidad unos días para evitar lesión o sobreentrenamiento.`;
+  } else if (f <= -15) {
+    tone = 'meh';
+    title = 'Carga alta, zona productiva';
+    text = `Forma ${signed(f, 1)}: estás cargando fuerte. Es normal en un bloque, pero vigila el descanso y programa una descarga pronto.`;
+  } else if (f <= -5) {
+    tone = 'good';
+    title = 'Carga óptima';
+    text = `Forma ${signed(f, 1)}: buen equilibrio entre estímulo y recuperación para seguir mejorando.`;
+  } else if (f < 5) {
+    tone = 'good';
+    title = 'Carga equilibrada';
+    text = `Forma ${signed(f, 1)}: mantienes el fitness sin acumular fatiga. Puedes subir algo la carga si buscas progresar.`;
+  } else if (f < 15) {
+    tone = 'good';
+    title = 'Fresco';
+    text = `Forma ${signed(f, 1)}: bien recuperado, buen momento para una sesión exigente o una competición.`;
+  } else {
+    tone = 'meh';
+    title = 'Carga baja';
+    text = `Forma ${signed(f, 1)}: llevas tiempo entrenando poco; si no es una descarga planificada, estás perdiendo fitness.`;
+  }
+  return { tone, title, text, points };
+}

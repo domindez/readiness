@@ -15,7 +15,7 @@ import WeeklyRunsCard from '../components/WeeklyRunsCard.astro';
 import { GROUP_LABELS, METRICS, METRIC_BY_KEY, type MetricDef, type MetricKey } from '../lib/metrics';
 import { alertsFor, analyze, ANSWER_MAX, goodness } from '../lib/readiness';
 import { RECENT_DAYS, recentMean, round } from '../lib/stats';
-import { assess } from '../lib/assessment';
+import { assess, assessLoad } from '../lib/assessment';
 import AssessmentCard from '../components/AssessmentCard.astro';
 
 const today = todayIn(env.TZ_NAME || 'Europe/Madrid');
@@ -136,7 +136,10 @@ const workout = workoutP ? await workoutP : null;
 const assessment = assess({ score, values: day.entry ?? {}, mean7, subjAvg: answersAvg });
 
 const primaryGroups = (['recuperacion', 'sueno'] as const).map((g) => ({ label: GROUP_LABELS[g], metrics: METRICS.filter((m) => m.group === g) }));
-const secondary = METRICS.filter((m) => m.group === 'fisiologia' || m.group === 'carga');
+const secondary = METRICS.filter((m) => m.group === 'carga');
+// Fisiología (respiración, SpO₂, temperatura) ya no se muestra, pero se conserva al guardar.
+const hidden = METRICS.filter((m) => m.group === 'fisiologia');
+const loadAssessment = assessLoad(day.entry ?? {});
 const secondaryFilled = secondary.filter((m) => day.entry?.[m.key] != null).length;
 const sourceLabel = { manual: 'Manual', intervals: 'intervals.icu', mixed: 'intervals.icu + manual' };
 const hour = Number(new Intl.DateTimeFormat('es-ES', { hour: 'numeric', hour12: false, timeZone: env.TZ_NAME || 'Europe/Madrid' }).format(new Date()));
@@ -175,20 +178,68 @@ const greeting = date !== today ? 'Registro' : hour < 13 ? 'Buenos días' : hour
 
     <AssessmentCard a={assessment} />
 
-    {workout && <LastWorkoutCard list={workout.list} run={workout.run} date={date} error={workout.error} />}
-
-    {workout?.weeks && <WeeklyRunsCard weeks={workout.weeks} date={date} />}
-
-    {
-      syncNote && (
-        <p class={`note ${syncNote.kind}`}>
-          <Icon name={syncNote.kind === 'error' ? 'alert' : syncNote.kind === 'ok' ? 'check' : 'info'} size={17} />
-          <span>{syncNote.text}</span>
-        </p>
-      )
-    }
-
     <form id="checkin" class="stack" data-date={date} novalidate>
+      <details class="card fold" open>
+        <summary class="card-head">
+          <span class="icon-badge"><Icon name="smile" size={18} /></span>
+          <div>
+            <h2>Sensaciones</h2>
+            <span class="muted small">Media de 0 (mal) a {ANSWER_MAX} (bien)</span>
+          </div>
+          <div class="spacer"></div>
+          {
+            questions.length > 0 && (
+              <span class="avg" id="qavg" data-max={ANSWER_MAX} title="Media de las respuestas de hoy">
+                <span class="avg-label">Media</span>
+                <span class="num avg-val">{answersAvg === null ? '–' : answersAvg.toFixed(1).replace('.', ',')}</span>
+              </span>
+            )
+          }
+          {
+            questions.length > 0 && (
+              <span class="progress" id="qprogress" data-total={questions.length}>
+                <svg viewBox="0 0 36 36" width="34" height="34" aria-hidden="true">
+                  <circle cx="18" cy="18" r="15" fill="none" stroke="var(--surface-3)" stroke-width="4" />
+                  <circle
+                    class="pg"
+                    cx="18"
+                    cy="18"
+                    r="15"
+                    fill="none"
+                    stroke="var(--accent)"
+                    stroke-width="4"
+                    stroke-linecap="round"
+                    stroke-dasharray={`${(answeredCount / questions.length) * 94.25} 94.25`}
+                    transform="rotate(-90 18 18)"
+                  />
+                </svg>
+                <span class="num pg-text">
+                  {answeredCount}/{questions.length}
+                </span>
+              </span>
+            )
+          }
+          <Icon name="chevronD" size={18} class="chev" />
+        </summary>
+        <div class="fold-body">
+          {questions.length === 0 && <p class="muted">No hay preguntas activas. Añádelas en <a href="/ajustes">Ajustes</a>.</p>}
+          {questions.map((q) => <LikertQuestion q={q} value={day.answers[q.id]} />)}
+      </div>
+      </details>
+
+      {workout && <LastWorkoutCard list={workout.list} run={workout.run} date={date} error={workout.error} />}
+
+      {workout?.weeks && <WeeklyRunsCard weeks={workout.weeks} date={date} />}
+
+      {
+        syncNote && (
+          <p class={`note ${syncNote.kind}`}>
+            <Icon name={syncNote.kind === 'error' ? 'alert' : syncNote.kind === 'ok' ? 'check' : 'info'} size={17} />
+            <span>{syncNote.text}</span>
+          </p>
+        )
+      }
+
       <section class="card">
         <div class="card-head">
           <span class="icon-badge"><Icon name="pulse" size={18} /></span>
@@ -241,11 +292,26 @@ const greeting = date !== today ? 'Registro' : hour < 13 ? 'Buenos días' : hour
 
         <details class="more">
           <summary>
-            <span>Fisiología y carga</span>
+            <span>Carga de entrenamiento</span>
             <span class="muted small">{secondaryFilled}/{secondary.length} con dato</span>
             <span class="spacer"></span>
             <Icon name="chevronD" size={18} class="chev" />
           </summary>
+          {
+            loadAssessment && (
+              <div class={`load-assess ${loadAssessment.tone}`}>
+                <strong>{loadAssessment.title}</strong>
+                <p>{loadAssessment.text}</p>
+                {loadAssessment.points.length > 0 && (
+                  <ul>
+                    {loadAssessment.points.map((p) => (
+                      <li>{p}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )
+          }
           <div class="tiles">
             {
               secondary.map((m) => (
@@ -274,51 +340,7 @@ const greeting = date !== today ? 'Registro' : hour < 13 ? 'Buenos días' : hour
             }
           </div>
         </details>
-      </section>
-
-      <section class="card">
-        <div class="card-head">
-          <span class="icon-badge"><Icon name="smile" size={18} /></span>
-          <div>
-            <h2>Sensaciones</h2>
-            <span class="muted small">Media de 0 (mal) a {ANSWER_MAX} (bien)</span>
-          </div>
-          <div class="spacer"></div>
-          {
-            questions.length > 0 && (
-              <span class="avg" id="qavg" data-max={ANSWER_MAX} title="Media de las respuestas de hoy">
-                <span class="avg-label">Media</span>
-                <span class="num avg-val">{answersAvg === null ? '–' : answersAvg.toFixed(1).replace('.', ',')}</span>
-              </span>
-            )
-          }
-          {
-            questions.length > 0 && (
-              <span class="progress" id="qprogress" data-total={questions.length}>
-                <svg viewBox="0 0 36 36" width="34" height="34" aria-hidden="true">
-                  <circle cx="18" cy="18" r="15" fill="none" stroke="var(--surface-3)" stroke-width="4" />
-                  <circle
-                    class="pg"
-                    cx="18"
-                    cy="18"
-                    r="15"
-                    fill="none"
-                    stroke="var(--accent)"
-                    stroke-width="4"
-                    stroke-linecap="round"
-                    stroke-dasharray={`${(answeredCount / questions.length) * 94.25} 94.25`}
-                    transform="rotate(-90 18 18)"
-                  />
-                </svg>
-                <span class="num pg-text">
-                  {answeredCount}/{questions.length}
-                </span>
-              </span>
-            )
-          }
-        </div>
-        {questions.length === 0 && <p class="muted">No hay preguntas activas. Añádelas en <a href="/ajustes">Ajustes</a>.</p>}
-        {questions.map((q) => <LikertQuestion q={q} value={day.answers[q.id]} />)}
+        {hidden.map((m) => <input class="keep" type="hidden" name={m.key} value={day.entry?.[m.key] ?? ''} />)}
       </section>
 
       <section class="card">
@@ -401,7 +423,7 @@ const greeting = date !== today ? 'Registro' : hour < 13 ? 'Buenos días' : hour
     e.preventDefault();
     const btn = form.querySelector<HTMLButtonElement>('button.save')!;
     const metrics: Record<string, string> = {};
-    form.querySelectorAll<HTMLInputElement>('.tile input').forEach((i) => (metrics[i.name] = i.value));
+    form.querySelectorAll<HTMLInputElement>('.tile input, input.keep').forEach((i) => (metrics[i.name] = i.value));
     const answers: Record<string, number> = {};
     form.querySelectorAll<HTMLFieldSetElement>('.likert').forEach((f) => {
       const c = f.querySelector<HTMLInputElement>('input:checked');
@@ -665,6 +687,29 @@ const greeting = date !== today ? 'Registro' : hour < 13 ? 'Buenos días' : hour
   .more .tiles {
     margin-top: 6px;
   }
+  .load-assess {
+    margin: 8px 0 12px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: var(--surface-2);
+    border-left: 4px solid var(--border-strong);
+    font-size: 0.87rem;
+  }
+  .load-assess.good { border-left-color: var(--green); }
+  .load-assess.meh { border-left-color: var(--amber); }
+  .load-assess.bad { border-left-color: var(--red); }
+  .load-assess p { margin: 4px 0 0; color: var(--text-2); }
+  .load-assess ul { margin: 8px 0 0; padding-left: 18px; color: var(--text-2); }
+
+  .fold > summary {
+    cursor: pointer;
+    list-style: none;
+    margin-bottom: 0;
+  }
+  .fold > summary::-webkit-details-marker { display: none; }
+  .fold[open] > summary { margin-bottom: 14px; }
+  .fold :global(.chev) { color: var(--muted); transition: transform 0.2s; flex: none; }
+  .fold[open] > summary :global(.chev) { transform: rotate(180deg); }
 
   .avg {
     display: flex;
